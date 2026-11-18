@@ -134,6 +134,9 @@ table.list tr.clickable:hover td { background: var(--hover); }
 .tabs a:hover, .tabs button:hover { color: var(--fg); text-decoration: none; background: none; }
 .tabs .router-link-active, .tabs .active { color: var(--accent); border-bottom-color: var(--accent); }
 
+/* ユーザーのアイコン（丸. 画像がなければ名前の1文字目） */
+.avatar { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-size: .7rem; font-weight: 600; flex: none; overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
 .chips { display: flex; flex-wrap: wrap; gap: .35rem; }
 .chip { font-size: .82rem; padding: .2rem .7rem; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; }
 .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
