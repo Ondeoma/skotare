@@ -25,8 +25,16 @@ final case class ApiConfig(
     cookieName: String = "skotare_session",
     devLogin: Boolean = false,
     rateLimit: RateLimitConfig = RateLimitConfig(),
-    version: String = "0.1.0"
+    version: String = "0.1.0",
+    oauthClients: List[OAuthClient] = Nil
 )
+
+/** skotare を利用者の権限で使う外部のサービス（OAuth のクライアント. 環境変数 OAUTH_CLIENTS）. scopes はこのクライアントに許すスコープ. */
+final case class OAuthClient(id: String, secret: String, redirectUri: String, name: String, scopes: List[String])
+
+/** HTML に埋め込む文字のエスケープ. */
+object Html:
+  def escape(s: String): String = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
 
 /** 誰の要求か. token は API トークンで呼ばれたときの (トークンID, スコープ). */
 final case class Principal(user: User, token: Option[(UUID, String)]):
@@ -174,11 +182,11 @@ object SecurityHeaders:
     val withCsp = if r.headers.get(CIString("Content-Security-Policy")).isDefined then r else r.putHeaders("Content-Security-Policy" -> StrictCsp)
     withCsp.putHeaders(fixed*)
 
-/** アプリのルートをまとめる（REST API・MCP・プッシュ通知の購読）. MCP は REST API をトークンで内部から呼ぶ. */
+/** アプリのルートをまとめる（REST API・OAuth の認可・MCP・プッシュ通知の購読）. MCP は REST API をトークンで内部から呼ぶ. */
 object ApiRoutes:
   def apply(oidc: Option[skotare.auth.OidcClient], users: UserStore, sess: SessionAuth, cfg: ApiConfig, monitorRoutes: MonitorRoutes,
       push: Option[(skotare.push.PushStore, skotare.push.PushService)] = None): HttpRoutes[IO] =
-    val rest = new AuthRoutes(oidc, users, sess, cfg).routes <+> monitorRoutes.routes <+>
+    val rest = new AuthRoutes(oidc, users, sess, cfg).routes <+> new OAuthRoutes(users, sess, cfg).routes <+> monitorRoutes.routes <+>
       push.fold(HttpRoutes.empty[IO])((store, service) => new PushRoutes(store, service, sess).routes)
     // 本文は MaxBody まで（大きな本文でメモリを使い切らせない. アイコンの 1MB より大きくしておく）.
     // Content-Length が超えていれば、EntityLimiter はルートに入る前に例外にするので、ここで 413 にする

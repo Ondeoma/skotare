@@ -13,7 +13,7 @@ import scala.concurrent.duration.FiniteDuration
 
 /**
  * IP ごとの回数の制限（1分あたり. 0 なら制限しない）. ログインしなくても使える入口だけに掛ける.
- * auth はログイン（/auth/…）、public はステータスページ（/api/public/…）.
+ * auth はログイン（/auth/…）と OAuth の認可（/oauth/…）、public はステータスページ（/api/public/…）.
  * trustedProxies はリバースプロキシの IP か CIDR. そこから来た要求だけ X-Forwarded-For を信じる.
  */
 final case class RateLimitConfig(authPerMinute: Int = 20, publicPerMinute: Int = 120, trustedProxies: List[Cidr[IpAddress]] = Nil)
@@ -68,7 +68,7 @@ object RateLimit:
     val pub  = new RateCounter(cfg.publicPerMinute, clock)
     HttpRoutes[IO] { req =>
       val counter = req.pathInfo.segments.map(_.decoded()).toList match
-        case "auth" :: _ if cfg.authPerMinute > 0                                   => Some(auth)
+        case ("auth" | "oauth") :: _ if cfg.authPerMinute > 0                      => Some(auth)
         case "api" :: "public" :: _ if cfg.publicPerMinute > 0                     => Some(pub)
         case _                                                                      => None
       (counter, clientKey(req, cfg.trustedProxies)).tupled match

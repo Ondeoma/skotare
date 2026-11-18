@@ -39,6 +39,23 @@ object Config:
   /** ノードの名前（既定はホスト名. コンテナではコンテナの ID になる）. */
   private def hostName: String = scala.util.Try(java.net.InetAddress.getLocalHost.getHostName).getOrElse("node")
 
+  /**
+   * OAUTH_CLIENTS: skotare を利用者の権限で使うサービス（OAuth のクライアント）.
+   * [{"id":"skakapo","secret":"…（16文字以上）","redirectUri":"https://…/api/connections/callback","name":"skakapo","scopes":["read","write"]}]
+   * （scopes は省くと read だけ. redirectUri は https://（手元なら http://localhost も可））
+   */
+  private def oauthClients: Either[String, List[OAuthClient]] =
+    opt("OAUTH_CLIENTS").fold(Right(Nil)) { s =>
+      io.circe.parser.parse(s).flatMap(_.as[List[io.circe.Json]]).left.map(_ => "OAUTH_CLIENTS は JSON の配列で指定してください").flatMap(_.traverse { j =>
+        val c = j.hcursor
+        (c.get[String]("id"), c.get[String]("secret"), c.get[String]("redirectUri")).tupled.toOption
+          .filter((id, sec, uri) => id.nonEmpty && sec.length >= 16 && (uri.startsWith("https://") || uri.startsWith("http://localhost")))
+          .map((id, sec, uri) => OAuthClient(id, sec, uri, c.get[String]("name").getOrElse(id),
+            c.get[List[String]]("scopes").toOption.map(_.filter(Set("read", "write"))).filter(_.nonEmpty).getOrElse(List("read"))))
+          .toRight("OAUTH_CLIENTS の各要素には id・secret（16文字以上）・redirectUri（https://）を指定してください")
+      }).flatMap(cs => Either.cond(cs.map(_.id).distinct.size == cs.size, cs, "OAUTH_CLIENTS の id が重複しています"))
+    }
+
   def load: IO[AppConfig] = IO.fromEither(
     (for
       dbUrl  <- required("DATABASE_URL")
@@ -68,6 +85,7 @@ object Config:
       // 待ち受けるアドレス（既定 0.0.0.0. 開発用のログインのときは 127.0.0.1）
       bind   <- opt("BIND_HOST").fold[Either[String, com.comcast.ip4s.Host]](Right(if devLogin then ipv4"127.0.0.1" else ipv4"0.0.0.0"))(h =>
                   com.comcast.ip4s.Host.fromString(h).toRight("BIND_HOST は IP アドレスかホスト名で書いてください"))
+      clients <- oauthClients
       region <- opt("REGION").getOrElse("default") match
                   case r if r.length <= 40 && !r.exists(c => c.isControl || c == '/') => Right(r)
                   case _ => Left("REGION は40文字までで、制御文字と / を含めないでください")
@@ -77,7 +95,7 @@ object Config:
       db = DbConfig(dbUrl, dbUser, dbPass, int("DATABASE_POOL_SIZE").getOrElse(conc + 6)),
       oidc = oidc,
       api = ApiConfig(cookieSecure = pub.startsWith("https://"), publicUrl = pub, sessionTtl = int("SESSION_DAYS").getOrElse(14).days,
-        devLogin = devLogin,
+        devLogin = devLogin, oauthClients = clients,
         rateLimit = RateLimitConfig(int("RATE_LIMIT_AUTH").getOrElse(20), int("RATE_LIMIT_PUBLIC").getOrElse(120), proxies)),
       staticDir = opt("STATIC_DIR"),
       appSecret = secret,
@@ -138,7 +156,7 @@ object Main extends IOApp.Simple:
                 healthRoutes(xa) <+> RumRoutes.routes <+> web.getOrElse(HttpRoutes.empty[IO])
         // セキュリティのヘッダーは、見つからない 404・内部エラーの 500 にも付ける
         httpApp <- HttpTelemetry(SecurityHeaders.app(ErrorHandling.Custom.recoverWith(all.orNotFound)(handler), cfg.api.cookieSecure),
-                     List("/api", "/auth", "/mcp"), RateLimit.clientIp(_, cfg.api.rateLimit.trustedProxies))
+                     List("/api", "/auth", "/mcp", "/oauth"), RateLimit.clientIp(_, cfg.api.rateLimit.trustedProxies))
         _ <- EmberServerBuilder.default[IO]
                .withHost(cfg.bindHost)
                .withPort(Port.fromInt(cfg.port).getOrElse(port"8080"))
@@ -215,7 +233,7 @@ object Main extends IOApp.Simple:
     val csp   = spaCsp(indexHtml)
     val files = fileService[IO](FileService.Config(dir))
     val index = HttpRoutes.of[IO] {
-      case req @ GET -> path if !path.segments.headOption.map(_.decoded()).exists(Set("api", "auth", "mcp", "healthz")) =>
+      case req @ GET -> path if !path.segments.headOption.map(_.decoded()).exists(Set("api", "auth", "mcp", "oauth", "healthz")) =>
         StaticFile.fromPath(Path(dir) / "index.html", Some(req)).getOrElseF(NotFound())
     }
     HttpRoutes[IO] { req =>

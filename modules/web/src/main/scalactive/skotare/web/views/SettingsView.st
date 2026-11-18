@@ -9,7 +9,7 @@ import scala.concurrent.{Future, Promise}
 import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
 import scala.scalajs.js
 
-// 設定: アイコン・名前（サーバー）、画面の色・プッシュ通知（この端末）、API トークン・MCP
+// 設定: アイコン・名前（サーバー）、画面の色・プッシュ通知（この端末）、連携しているサービス（OAuth）、API トークン・MCP
 case class State(name: RV[String] = RV(Store.me.v.map(_.name).getOrElse("")),
                  theme: RV[String] = RV(Theme.current.v))
 
@@ -99,6 +99,7 @@ def removeAvatar(): Unit =
       <p class="small">受け取ると、画面を閉じていても、監視が停止・復旧したときにこの端末に届きます。</p>
       <p><PushToggle /></p>
     </section>
+    <ConnectedApps />
     <ApiTokenSettings />
   </div>
 </template>

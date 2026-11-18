@@ -117,7 +117,8 @@ DB はすべての拠点から届く場所に置き、冗長にします（DB �
 | `REGION` | このノードの拠点の名前（既定 `default`。同じ場所のノードは同じ名前にする。例 `tokyo`・`osaka`） |
 | `CHECK_CONCURRENCY` | 1台で同時に確かめる数（既定 16、1〜256） |
 | `APP_SECRET` | 通知先の秘密の値（stui の Webhook の URL・skereru の APIキー）を暗号化する鍵（16文字以上。全ノードで同じ値にする。通知先を使うときは必須） |
-| `RATE_LIMIT_AUTH` / `RATE_LIMIT_PUBLIC` | IP ごとの1分あたりの回数の上限。ログイン（`/auth/…`、既定 20）とステータスページ（`/api/public/…`、既定 120）。0 で制限しない |
+| `OAUTH_CLIENTS` | skotare を利用者の権限で使うサービス（OAuth のクライアント）。`[{"id":"skakapo","secret":"…（16文字以上）","redirectUri":"https://…/api/connections/callback","name":"skakapo","scopes":["read","write"]}]`（`scopes` を省くと `read` だけ） |
+| `RATE_LIMIT_AUTH` / `RATE_LIMIT_PUBLIC` | IP ごとの1分あたりの回数の上限。ログイン・OAuth の認可（`/auth/…`・`/oauth/…`、既定 20）とステータスページ（`/api/public/…`、既定 120）。0 で制限しない |
 | `TRUSTED_PROXIES` | リバースプロキシの IP か CIDR（カンマ区切り）。そこから来た要求だけ `X-Forwarded-For` から利用者の IP を読む |
 | `STATIC_DIR` | ビルド済みの画面（`dist/static`） |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` | ログ・メトリクス・トレースの送り先（skorimako の URL と `Authorization=Bearer sko_…`（ingest のキー））。未設定なら送らない |
@@ -137,6 +138,10 @@ skotare は、同じ技術で作っている兄弟プロジェクト（[stui](ht
 - **stui**: stui のチャンネルの設定 →「受信 Webhook」で URL を作り、skotare の「通知先」に stui として登録します。
 - **skereru**: skereru の「設定 → APIキー・MCP」で send のスコープの APIキーを発行し、skotare の「通知先」に skereru の URL・差出人・宛先と一緒に登録します。
 - **skorimako**: 上の `OTEL_*`・`SKORIMAKO_RUM_*` を設定します。
+- **skakapo**（AI エージェント）: skotare を OAuth の提供側として使います。`OAUTH_CLIENTS` に skakapo を登録し（`redirectUri` は skakapo の `…/api/connections/callback`）、
+  skakapo には認可の URL `${PUBLIC_URL}/oauth/authorize`、トークンの URL `${PUBLIC_URL}/oauth/token`（クライアントの認証は Basic）、MCP の URL `${PUBLIC_URL}/mcp` を設定します。
+  認可コード + PKCE（S256 のみ）で、スコープは `read`（参照のみ）と `write`（読み書き）。アクセストークンは1時間で切れ、`refresh_token` で替えます
+  （refresh token は使うたびに替わり、最後の更新から90日使わなければ切れます）。利用者は「設定 → 連携しているサービス」で連携を確かめ、取り消せます。
 
 ## セキュリティ
 
@@ -150,4 +155,5 @@ skotare は、同じ技術で作っている兄弟プロジェクト（[stui](ht
 - 本文の正規表現は200文字まで、照合は本文の先頭 64KB に 0.5 秒までにしています（時間のかかる正規表現でサーバーを止めさせない）
 - ログインは state をブラウザの Cookie にも結び付けて確かめます（ログイン CSRF 対策）。開発用のログイン（`DEV_LOGIN`）のときは 127.0.0.1 でだけ待ち受けます
 - ステータスページは監視の URL・ホスト・内部の名前を出しません
+- OAuth の認可コード（60秒・1回だけ）・アクセストークン・refresh token もハッシュだけを保存します。許可の画面は Cookie と hidden の値の照合で CSRF を防ぎます
 - セッション・API トークンはハッシュだけを保存します。画面からの更新には `X-Skotare` ヘッダーを要求します（CSRF 対策）

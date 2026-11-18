@@ -22,7 +22,13 @@ object UserCols:
   def avatar(a: String): Fragment = Fragment.const(
     s"(case when $a.avatar_version is not null then '/api/users/' || $a.id || '/avatar?v=' || $a.avatar_version else $a.avatar_url end)")
 
-/** ユーザー・セッション・ログイン途中の状態. */
+final case class OAuthCode(clientId: String, redirectUri: String, userId: UUID, codeChallenge: String, scope: String)
+
+/** OAuth で発行するトークンの組（値はハッシュだけ）. scope は read か write. */
+final case class OAuthIssue(userId: UUID, clientId: String, name: String, prefix: String, accessHash: Array[Byte], refreshHash: Array[Byte],
+    scope: String, expires: Instant)
+
+/** ユーザー・セッション・ログイン途中の状態・API トークン・OAuth の認可. */
 final class UserStore(xa: Transactor[IO]) extends TxStore(xa):
 
   private val cols = fr"app_user.id, sub, name, email," ++ UserCols.avatar("app_user") ++ fr", timezone, disabled, avatar_version is not null"
@@ -110,14 +116,14 @@ final class UserStore(xa: Transactor[IO]) extends TxStore(xa):
       .query[(UUID, String, String, String, Instant, Option[Instant], Option[Instant])].unique.map(tokenDto)
   )
 
-  /** 失効していないもの（期限切れも含む. 画面で期限切れと分かるように）. */
+  /** 失効していないもの（期限切れも含む. 画面で期限切れと分かるように）. OAuth で発行したものは「連携しているサービス」に出す. */
   def tokens(userId: UUID): IO[List[ApiTokenDto]] = tx(
-    (fr"select" ++ tokenCols ++ fr"from api_token where user_id = $userId and revoked_at is null order by created_at desc")
+    (fr"select" ++ tokenCols ++ fr"from api_token where user_id = $userId and revoked_at is null and oauth_client is null order by created_at desc")
       .query[(UUID, String, String, String, Instant, Option[Instant], Option[Instant])].to[List].map(_.map(tokenDto))
   )
 
   def revokeToken(userId: UUID, id: UUID): IO[Boolean] = tx(
-    sql"update api_token set revoked_at = now() where id = $id and user_id = $userId and revoked_at is null".update.run.map(_ > 0)
+    sql"update api_token set revoked_at = now() where id = $id and user_id = $userId and revoked_at is null and oauth_client is null".update.run.map(_ > 0)
   )
 
   /** 有効なトークンの持ち主とスコープ. 最後に使った日時は1分に1回だけ書く. */
@@ -130,6 +136,69 @@ final class UserStore(xa: Transactor[IO]) extends TxStore(xa):
           sql"update api_token set last_used_at = $now where id = $id and (last_used_at is null or last_used_at < $now - interval '1 minute')".update.run *>
             findC(uid).map(_.filterNot(_.disabled).map(u => (u, id, scope)))
       }
+  )
+
+  // ---------------------------------------------------------------- OAuth の提供側（認可コード・連携のトークン）
+
+  def createCode(hash: Array[Byte], c: OAuthCode, expires: Instant): IO[Unit] = tx(
+    sql"""insert into oauth_code (code_hash, client_id, redirect_uri, user_id, code_challenge, scope, expires_at)
+          values ($hash, ${c.clientId}, ${c.redirectUri}, ${c.userId}, ${c.codeChallenge}, ${c.scope}, $expires)""".update.run *>
+      sql"delete from oauth_code where expires_at < now() - interval '1 hour'".update.run.void
+  )
+
+  /** 認可コードを使う（有効期限内で、まだ使っていないものだけ. 使ったら使用済みにする）. */
+  def consumeCode(hash: Array[Byte]): IO[Option[OAuthCode]] = tx(
+    sql"""update oauth_code set used_at = now() where code_hash = $hash and used_at is null and expires_at > now()
+          returning client_id, redirect_uri, user_id, code_challenge, scope""".query[OAuthCode].option
+  )
+
+  private def insertGrant(g: OAuthIssue, granted: Instant, lastUsed: Option[Instant]): ConnectionIO[Unit] =
+    sql"""insert into api_token (id, user_id, name, prefix, token_hash, scope, expires_at, last_used_at, oauth_client, refresh_hash, granted_at)
+          values (${UUID.randomUUID()}, ${g.userId}, ${g.name}, ${g.prefix}, ${g.accessHash}, ${g.scope}, ${g.expires}, $lastUsed,
+                  ${g.clientId}, ${g.refreshHash}, $granted)""".update.run.void
+
+  /** 許可したときのトークンの組を登録する（そのユーザーにそのクライアントが以前に発行したものは失効させる）. */
+  def grant(g: OAuthIssue): IO[Unit] = tx(
+    sql"""update api_token set revoked_at = now() where user_id = ${g.userId} and oauth_client = ${g.clientId} and revoked_at is null""".update.run *>
+      insertGrant(g, Instant.now(), None)
+  )
+
+  /**
+   * refresh token で新しい組に替える. 前の組は失効させる（同じ refresh token は2度使えない）.
+   * 有効なのは、そのクライアントが発行した、失効していない、最後の更新から refreshDays 日以内のもので、利用者が無効にされていないとき.
+   * next は (ユーザー, 今のスコープ) から新しい組を作る（Left なら替えない. 求められたスコープが広すぎるときなど）.
+   * 有効な refresh token でなければ None.
+   */
+  def refresh[E](hash: Array[Byte], clientId: String, refreshDays: Int, next: (UUID, String) => Either[E, OAuthIssue]): IO[Option[Either[E, OAuthIssue]]] = tx(
+    sql"""select t.id, t.user_id, t.scope, t.granted_at, t.last_used_at from api_token t join app_user u on u.id = t.user_id
+          where t.refresh_hash = $hash and t.oauth_client = $clientId and t.revoked_at is null and not u.disabled
+            and t.created_at > now() - make_interval(days => $refreshDays)
+          for update of t"""
+      .query[(UUID, UUID, String, Option[Instant], Option[Instant])].option.flatMap {
+        case None => none[Either[E, OAuthIssue]].pure[ConnectionIO]
+        case Some((id, uid, scope, granted, lastUsed)) =>
+          next(uid, scope).traverse(g =>
+            sql"update api_token set revoked_at = now() where id = $id".update.run *> insertGrant(g, granted.getOrElse(Instant.now()), lastUsed).as(g))
+            .map(Some(_))
+      }
+  )
+
+  /** クライアントからの失効（RFC 7009）. アクセストークンか refresh token の、その組を失効させる（なければ何もしない）. */
+  def revokeOAuthToken(hash: Array[Byte], clientId: String): IO[Unit] = tx(
+    sql"""update api_token set revoked_at = now()
+          where (token_hash = $hash or refresh_hash = $hash) and oauth_client = $clientId and revoked_at is null""".update.run.void
+  )
+
+  /** 連携しているサービス（クライアントの ID, スコープ, 許可した日時, 最後に使った日時）. */
+  def grants(userId: UUID): IO[List[(String, String, Instant, Option[Instant])]] = tx(
+    sql"""select oauth_client, scope, coalesce(granted_at, created_at), last_used_at from api_token
+          where user_id = $userId and oauth_client is not null and revoked_at is null order by granted_at"""
+      .query[(String, String, Instant, Option[Instant])].to[List]
+  )
+
+  /** 連携をやめる（そのクライアントのアクセストークン・refresh token をすべて失効させる）. */
+  def revokeGrant(userId: UUID, clientId: String): IO[Boolean] = tx(
+    sql"update api_token set revoked_at = now() where user_id = $userId and oauth_client = $clientId and revoked_at is null".update.run.map(_ > 0)
   )
 
   // ---------------------------------------------------------------- ログイン途中の状態（OIDC）

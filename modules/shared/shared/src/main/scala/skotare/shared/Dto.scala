@@ -353,3 +353,7 @@ final case class ApiTokenReq(name: String, scope: String, expiresInDays: Option[
 
 /** 作ったときだけ token（秘密の値）を返す. */
 final case class ApiTokenCreated(info: ApiTokenDto, token: String) derives Encoder.AsObject, Decoder
+
+/** OAuth で連携しているサービス（クライアント）. scope は read か write（write は読み書き）. lastUsedAt は最後に API を呼んだ日時. */
+final case class OAuthGrantDto(clientId: String, name: String, scope: String, grantedAt: String, lastUsedAt: Option[String])
+    derives Encoder.AsObject, Decoder

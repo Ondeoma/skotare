@@ -77,6 +77,11 @@ object Api {
   def createToken(r: ApiTokenReq): Future[ApiTokenCreated] = post[ApiTokenCreated]("/api/tokens", r.asJson)
   def revokeToken(id: UUID): Future[Unit] = delete(s"/api/tokens/$id")
 
+  // ---------------------------------------------------------------- 連携しているサービス（OAuth）
+
+  def oauthGrants(): Future[List[OAuthGrantDto]] = get[List[OAuthGrantDto]]("/api/oauth/grants")
+  def revokeOAuthGrant(clientId: String): Future[Unit] = delete("/api/oauth/grants/" + enc(clientId))
+
   // ---------------------------------------------------------------- 監視
 
   def summary(): Future[SummaryDto] = get[SummaryDto]("/api/summary")

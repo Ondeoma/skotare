@@ -33,7 +33,10 @@ class FlowSpec extends munit.CatsEffectSuite:
 
   private val dbCfg  = DbConfig(sys.env.getOrElse("TEST_DATABASE_URL", "jdbc:postgresql://localhost:54389/skotare_test"), "skotare", "skotare", 4)
   private val issuer = "http://localhost:9999"
-  private val apiCfg = ApiConfig(cookieSecure = false, publicUrl = "http://localhost:8114")
+  private val agentCb = "http://localhost:5199/api/connections/callback"
+  private val apiCfg = ApiConfig(cookieSecure = false, publicUrl = "http://localhost:8114", oauthClients = List(
+    OAuthClient("skakapo", "skakapo-test-secret-0123456789", agentCb, "skakapo", List("read", "write")),
+    OAuthClient("viewer", "viewer-test-secret-0123456789", "https://viewer.example.com/cb", "閲覧アプリ", List("read"))))
 
   /** 監視の相手（/health は healthy が true なら 200 "ok"、false なら 503）. */
   private val healthy = new AtomicBoolean(true)
@@ -382,3 +385,176 @@ class FlowSpec extends munit.CatsEffectSuite:
       _   <- sql"delete from node where region in ('tokyo', 'osaka', 'nagoya')".update.run.transact(e.xa)
     yield ()
   }
+
+  // ------------------------------------------------------------------ OAuth の提供側（skakapo が利用者の権限で使う）
+
+  private val verifier  = "v" * 50
+  private val challenge = skotare.auth.Crypto.pkceChallenge(verifier)
+
+  private def authorizeUri(client: String = "skakapo", redirect: String = agentCb, scope: String = "read write"): Uri =
+    uri"/oauth/authorize".withQueryParams(Map("response_type" -> "code", "client_id" -> client, "redirect_uri" -> redirect, "scope" -> scope,
+      "state" -> "st-1", "code_challenge" -> challenge, "code_challenge_method" -> "S256"))
+
+  private def withSession(session: String, r: Request[IO], extra: (String, String)*): Request[IO] =
+    r.putHeaders(Cookie(cats.data.NonEmptyList(RequestCookie("skotare_session", session), extra.toList.map((k, v) => RequestCookie(k, v)))))
+
+  private def token(form: (String, String)*)(client: String = "skakapo", secret: String = "skakapo-test-secret-0123456789"): IO[Response[IO]] =
+    fixture().app.run(Request[IO](Method.POST, uri"/oauth/token").withEntity(UrlForm(form*))
+      .putHeaders(Authorization(BasicCredentials(client, secret))))
+
+  /** ログインした利用者が許可の画面で許可し、認可コードを受け取る. */
+  private def authorize(session: String, scope: String): IO[String] =
+    val e = fixture()
+    for
+      pg  <- e.app.run(withSession(session, Request[IO](Method.GET, authorizeUri(scope = scope))))
+      _    = assertEquals(pg.status, Status.Ok)
+      html <- pg.bodyText.compile.string
+      _    = assert(html.contains("skakapo") && html.contains("<code>read</code>"), html)
+      _    = assertEquals(html.contains("<code>write</code>"), scope.contains("write"))
+      csrf = pg.cookies.find(_.name == "skotare_oauth_csrf").map(_.content).getOrElse(fail("no csrf cookie"))
+      hidden = hiddenInputs(html)
+      // CSRF の値が合わなければ断る
+      bad <- e.app.run(withSession(session, Request[IO](Method.POST, uri"/oauth/authorize").withEntity(UrlForm((hidden :+ ("decision" -> "allow"))*))))
+      _    = assertEquals(bad.status, Status.BadRequest)
+      ok  <- e.app.run(withSession(session, Request[IO](Method.POST, uri"/oauth/authorize").withEntity(UrlForm((hidden :+ ("decision" -> "allow"))*)),
+               "skotare_oauth_csrf" -> csrf))
+      _    = assertEquals(ok.status, Status.Found)
+      cb   = location(ok)
+      _    = assert(cb.renderString.startsWith(agentCb + "?"), cb.renderString)
+      _    = assertEquals(cb.params.get("state"), Some("st-1"))
+    yield cb.params.getOrElse("code", fail(s"no code: $cb"))
+
+  /** 許可の画面のフォームの hidden の値（ボタンの decision は除く）. */
+  private def hiddenInputs(html: String): List[(String, String)] =
+    "type=\"hidden\" name=\"([a-z_]+)\" value=\"([^\"]*)\"".r.findAllMatchIn(html).map(m => m.group(1) -> m.group(2).replace("&amp;", "&")).toList
+
+  private def exchange(code: String): IO[Json] =
+    token("grant_type" -> "authorization_code", "code" -> code, "redirect_uri" -> agentCb, "code_verifier" -> verifier)().flatMap(json[Json])
+
+  private def mcp(tok: String, method: String, params: Json = Json.obj()): IO[Response[IO]] =
+    bearer(tok, Method.POST, "/mcp", Some(Json.obj("jsonrpc" -> "2.0".asJson, "id" -> 1.asJson, "method" -> method.asJson, "params" -> params)))
+
+  test("OAuth: 未ログインならログインへ、知らないクライアント・違う戻り先は 400、許していないスコープは invalid_scope") {
+    val e = fixture()
+    for
+      r1 <- e.app.run(Request[IO](Method.GET, authorizeUri()))
+      _   = assertEquals(r1.status, Status.Found)
+      lo  = location(r1)
+      _   = assertEquals(lo.path.renderString, "/auth/login")
+      _   = assert(lo.params.get("returnTo").exists(_.startsWith("/oauth/authorize?")), lo.renderString)
+      // ログインの戻り先として受け付ける（ログインの後にこの画面へ戻る）
+      _   = assertEquals(SafePath.of(lo.params.get("returnTo")), lo.params("returnTo"))
+      r2 <- e.app.run(Request[IO](Method.GET, authorizeUri(client = "unknown")))
+      _   = assertEquals(r2.status, Status.BadRequest)
+      r3 <- e.app.run(Request[IO](Method.GET, authorizeUri(redirect = "https://evil.example.com/cb")))
+      _   = assertEquals(r3.status, Status.BadRequest)
+      _   = assert(r3.headers.get[Location].isEmpty)
+      r4 <- e.app.run(Request[IO](Method.GET, authorizeUri(client = "viewer", redirect = "https://viewer.example.com/cb", scope = "read write")))
+      _   = assertEquals(r4.status, Status.Found)
+      _   = assertEquals(location(r4).params.get("error"), Some("invalid_scope"))
+      r5 <- e.app.run(Request[IO](Method.GET, authorizeUri(scope = "admin")))
+      _   = assertEquals(location(r5).params.get("error"), Some("invalid_scope"))
+      // PKCE は S256 だけ
+      r6 <- e.app.run(Request[IO](Method.GET, authorizeUri().withQueryParam("code_challenge_method", "plain")))
+      _   = assertEquals(location(r6).params.get("error"), Some("invalid_request"))
+      // クライアントの認証が違えば 401
+      t1 <- token("grant_type" -> "authorization_code", "code" -> "x")(secret = "wrong-secret-0123456789")
+      _   = assertEquals(t1.status, Status.Unauthorized)
+    yield ()
+  }
+
+  test("OAuth: 許可 → コード → トークンで MCP を使える. refresh で替えると前のトークンは使えない. 設定の画面で取り消せる") {
+    for
+      t    <- login("連携する人", "agent-user@example.com")
+      code <- authorize(t, "read write")
+      tk   <- exchange(code)
+      c     = tk.hcursor
+      access  = c.get[String]("access_token").getOrElse(fail(tk.noSpaces))
+      refresh = c.get[String]("refresh_token").getOrElse(fail(tk.noSpaces))
+      _     = assertEquals(c.get[String]("token_type").toOption, Some("Bearer"))
+      _     = assertEquals(c.get[String]("scope").toOption, Some("read write"))
+      _     = assertEquals(c.get[Long]("expires_in").toOption, Some(3600L))
+      // 同じコードは2度使えない
+      again <- token("grant_type" -> "authorization_code", "code" -> code, "redirect_uri" -> agentCb, "code_verifier" -> verifier)()
+      _     = assertEquals(again.status, Status.BadRequest)
+      tl   <- mcp(access, "tools/list").flatMap(json[Json])
+      names = tl.hcursor.downField("result").downField("tools").as[List[Json]].getOrElse(Nil).flatMap(_.hcursor.get[String]("name").toOption)
+      _     = assert(names.contains("get_status") && names.contains("create_monitor"), names)
+      me   <- bearer(access, Method.GET, "/api/me").flatMap(json[MeDto])
+      _     = assertEquals(me.name, "連携する人")
+      cr   <- bearer(access, Method.POST, "/api/monitors", Some(httpMonitor("連携で作った監視", "https://example.com").asJson))
+      _     = assertEquals(cr.status, Status.Created)
+      // 連携のトークンは API トークンの一覧ではなく、連携しているサービスに出る
+      toks <- call(t, Method.GET, "/api/tokens").flatMap(json[List[ApiTokenDto]])
+      _     = assert(!toks.exists(_.name.contains("skakapo")), toks)
+      gs   <- call(t, Method.GET, "/api/oauth/grants").flatMap(json[List[OAuthGrantDto]])
+      _     = assertEquals(gs.map(g => (g.clientId, g.name, g.scope)), List(("skakapo", "skakapo", "write")))
+      _     = assert(gs.head.lastUsedAt.isDefined)
+      // 連携の管理は画面（Cookie）からだけ
+      gb   <- bearer(access, Method.GET, "/api/oauth/grants")
+      _     = assertEquals(gb.status, Status.Forbidden)
+      // refresh で替える（scope を付ければ狭められ、広げられない）
+      r1   <- token("grant_type" -> "refresh_token", "refresh_token" -> refresh)().flatMap(json[Json])
+      access2  = r1.hcursor.get[String]("access_token").getOrElse(fail(r1.noSpaces))
+      refresh2 = r1.hcursor.get[String]("refresh_token").getOrElse(fail(r1.noSpaces))
+      _     = assertEquals(r1.hcursor.get[String]("scope").toOption, Some("read write"))
+      old  <- bearer(access, Method.GET, "/api/me")
+      _     = assertEquals(old.status, Status.Unauthorized)
+      reuse <- token("grant_type" -> "refresh_token", "refresh_token" -> refresh)()
+      _     = assertEquals(reuse.status, Status.BadRequest)
+      other <- token("grant_type" -> "refresh_token", "refresh_token" -> refresh2)(client = "viewer", secret = "viewer-test-secret-0123456789")
+      _     = assertEquals(other.status, Status.BadRequest)
+      now  <- mcp(access2, "tools/list")
+      _     = assertEquals(now.status, Status.Ok)
+      r2   <- token("grant_type" -> "refresh_token", "refresh_token" -> refresh2, "scope" -> "read")().flatMap(json[Json])
+      _     = assertEquals(r2.hcursor.get[String]("scope").toOption, Some("read"))
+      access3  = r2.hcursor.get[String]("access_token").getOrElse("")
+      refresh3 = r2.hcursor.get[String]("refresh_token").getOrElse("")
+      wide <- token("grant_type" -> "refresh_token", "refresh_token" -> refresh3, "scope" -> "read write")()
+      _     = assertEquals(wide.status, Status.BadRequest)
+      // 広げる要求で断っても、refresh token はそのまま使える
+      ro   <- bearer(access3, Method.POST, "/api/monitors", Some(httpMonitor("参照のみ", "https://example.com").asJson))
+      _     = assertEquals(ro.status, Status.Forbidden)
+      gs2  <- call(t, Method.GET, "/api/oauth/grants").flatMap(json[List[OAuthGrantDto]])
+      _     = assertEquals(gs2.map(_.scope), List("read"))
+      _     = assertEquals(gs2.head.grantedAt, gs.head.grantedAt)
+      // 取り消すと、アクセストークンも refresh token も使えない
+      del  <- call(t, Method.DELETE, "/api/oauth/grants/skakapo")
+      _     = assertEquals(del.status, Status.NoContent)
+      gone <- mcp(access3, "tools/list")
+      _     = assertEquals(gone.status, Status.Unauthorized)
+      rf   <- token("grant_type" -> "refresh_token", "refresh_token" -> refresh3)()
+      _     = assertEquals(rf.status, Status.BadRequest)
+      gs3  <- call(t, Method.GET, "/api/oauth/grants").flatMap(json[List[OAuthGrantDto]])
+      _     = assertEquals(gs3, Nil)
+    yield ()
+  }
+
+  test("OAuth: read だけのトークンでは書き込みが拒まれる. 拒否すれば access_denied") {
+    for
+      t    <- login("参照だけ許す人", "read-only@example.com")
+      code <- authorize(t, "read")
+      tk   <- exchange(code)
+      _     = assertEquals(tk.hcursor.get[String]("scope").toOption, Some("read"))
+      access = tk.hcursor.get[String]("access_token").getOrElse(fail(tk.noSpaces))
+      l    <- bearer(access, Method.GET, "/api/monitors")
+      _     = assertEquals(l.status, Status.Ok)
+      w    <- bearer(access, Method.POST, "/api/monitors", Some(httpMonitor("書けない", "https://example.com").asJson))
+      _     = assertEquals(w.status, Status.Forbidden)
+      tl   <- mcp(access, "tools/list").flatMap(json[Json])
+      names = tl.hcursor.downField("result").downField("tools").as[List[Json]].getOrElse(Nil).flatMap(_.hcursor.get[String]("name").toOption)
+      _     = assert(names.contains("get_status") && !names.contains("create_monitor"), names)
+      cr   <- mcp(access, "tools/call", Json.obj("name" -> "create_monitor".asJson,
+                "arguments" -> Json.obj("name" -> "書けない".asJson, "kind" -> "tcp".asJson, "host" -> "127.0.0.1".asJson, "port" -> 9.asJson))).flatMap(json[Json])
+      _     = assertEquals(cr.hcursor.downField("result").get[Boolean]("isError").toOption, Some(true), cr.noSpaces)
+      // 拒否すれば access_denied で戻す
+      pg   <- fixture().app.run(withSession(t, Request[IO](Method.GET, authorizeUri(scope = "read"))))
+      csrf  = pg.cookies.find(_.name == "skotare_oauth_csrf").map(_.content).getOrElse("")
+      html <- pg.bodyText.compile.string
+      hidden = hiddenInputs(html)
+      dn   <- fixture().app.run(withSession(t, Request[IO](Method.POST, uri"/oauth/authorize").withEntity(UrlForm((hidden :+ ("decision" -> "deny"))*)),
+                "skotare_oauth_csrf" -> csrf))
+      _     = assertEquals(location(dn).params.get("error"), Some("access_denied"))
+    yield ()
+  }
+
