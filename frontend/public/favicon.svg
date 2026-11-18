@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="32" height="32">
+  <!-- 小さく表示するための簡略版（logo.svg から、ほお・目の光・双葉の片方・ランプを省き、目と脈の線を太くしたもの） -->
+  <rect width="160" height="160" rx="36" fill="#FFF4D6"/>
+  <path d="M80 31q-12-13-4-27q14 7 4 27z" fill="#0F766E"/>
+  <circle cx="80" cy="80" r="50" fill="#2A9AA8"/>
+  <path d="M36 66q6-34 44-36q38 2 44 36q-18-16-44-16q-26 0-44 16z" fill="#1D6F8C"/>
+  <path d="M36 92q44-22 88 0v20H36z" fill="#F3E3C3"/>
+  <circle cx="65" cy="63" r="7" fill="#13202E"/><circle cx="95" cy="63" r="7" fill="#13202E"/>
+  <path d="M73 66q7-6 14 0l-7 24z" fill="#2A2F38"/>
+  <rect x="28" y="92" width="104" height="60" rx="10" fill="#17323A"/>
+  <path d="M38 124h18l7-14 9 28 9-36 8 22h33" stroke="#34D399" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <ellipse cx="38" cy="94" rx="10" ry="7" fill="#2A9AA8"/><ellipse cx="122" cy="94" rx="10" ry="7" fill="#2A9AA8"/>
+</svg>
