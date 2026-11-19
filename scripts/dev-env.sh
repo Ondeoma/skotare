@@ -14,5 +14,7 @@ else
 fi
 # skotare を利用者の権限で使うサービス（OAuth のクライアント. 開発用の値. skakapo の画面は :5199）
 export OAUTH_CLIENTS='[{"id":"skakapo","secret":"skakapo-dev-secret-0123456789","redirectUri":"http://localhost:5199/api/connections/callback","name":"skakapo","scopes":["read","write"]}]'
+# skotare から stui を利用者の権限で使う向き（通知先にチャンネルを選ぶ. stui の OAUTH_CLIENTS に client_id=skotare として登録してある. URL は stui の画面の開発サーバー）
+export STUI_URL=http://localhost:5178 STUI_INTERNAL_URL=http://localhost:8098 STUI_CLIENT_ID=skotare STUI_CLIENT_SECRET=skotare-dev-secret-0123456789
 # 秘密の値の暗号化の鍵（開発用. 本番では十分に長い乱数にする）
 export APP_SECRET=${APP_SECRET:-skotare-dev-app-secret-0123456789}

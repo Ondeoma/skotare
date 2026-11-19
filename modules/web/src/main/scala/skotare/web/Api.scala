@@ -106,6 +106,11 @@ object Api {
   def testNotifier(id: UUID): Future[Unit] = post[Json](s"/api/notifiers/$id/test").map(_ => ())
   def deleteNotifier(id: UUID): Future[Unit] = delete(s"/api/notifiers/$id")
 
+  // stui との連携（通知先にチャンネルを選ぶ）. 連携を始めるのは画面の遷移（/api/integrations/stui/connect）
+  def integrations(): Future[List[IntegrationDto]] = get[List[IntegrationDto]]("/api/integrations")
+  def stuiChannels(): Future[List[StuiChannelDto]] = get[List[StuiChannelDto]]("/api/integrations/stui/channels")
+  def disconnectStui(): Future[Unit] = delete("/api/integrations/stui/connection")
+
   def pages(): Future[List[StatusPageDto]] = get[List[StatusPageDto]]("/api/pages")
   def savePage(id: Option[UUID], r: StatusPageReq): Future[StatusPageDto] = id match {
     case None     => post[StatusPageDto]("/api/pages", r.asJson)

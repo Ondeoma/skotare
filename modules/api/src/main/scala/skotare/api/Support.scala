@@ -26,8 +26,16 @@ final case class ApiConfig(
     devLogin: Boolean = false,
     rateLimit: RateLimitConfig = RateLimitConfig(),
     version: String = "0.1.0",
-    oauthClients: List[OAuthClient] = Nil
+    oauthClients: List[OAuthClient] = Nil,
+    stui: Option[LinkService] = None
 )
+
+/**
+ * skotare が利用者の権限で使う兄弟のサービス（OAuth のクライアント側. 今は stui だけ）.
+ * url は利用者のブラウザが開く URL、internalUrl はサーバーから呼ぶ URL（なければ url）.
+ */
+final case class LinkService(provider: String, url: String, clientId: String, clientSecret: String, internalUrl: Option[String] = None):
+  def apiUrl: String = internalUrl.getOrElse(url)
 
 /** skotare を利用者の権限で使う外部のサービス（OAuth のクライアント. 環境変数 OAUTH_CLIENTS）. scopes はこのクライアントに許すスコープ. */
 final case class OAuthClient(id: String, secret: String, redirectUri: String, name: String, scopes: List[String])
@@ -185,8 +193,8 @@ object SecurityHeaders:
 /** アプリのルートをまとめる（REST API・OAuth の認可・MCP・プッシュ通知の購読）. MCP は REST API をトークンで内部から呼ぶ. */
 object ApiRoutes:
   def apply(oidc: Option[skotare.auth.OidcClient], users: UserStore, sess: SessionAuth, cfg: ApiConfig, monitorRoutes: MonitorRoutes,
-      push: Option[(skotare.push.PushStore, skotare.push.PushService)] = None): HttpRoutes[IO] =
-    val rest = new AuthRoutes(oidc, users, sess, cfg).routes <+> new OAuthRoutes(users, sess, cfg).routes <+> monitorRoutes.routes <+>
+      push: Option[(skotare.push.PushStore, skotare.push.PushService)] = None, extra: HttpRoutes[IO] = HttpRoutes.empty[IO]): HttpRoutes[IO] =
+    val rest = new AuthRoutes(oidc, users, sess, cfg).routes <+> new OAuthRoutes(users, sess, cfg).routes <+> monitorRoutes.routes <+> extra <+>
       push.fold(HttpRoutes.empty[IO])((store, service) => new PushRoutes(store, service, sess).routes)
     // 本文は MaxBody まで（大きな本文でメモリを使い切らせない. アイコンの 1MB より大きくしておく）.
     // Content-Length が超えていれば、EntityLimiter はルートに入る前に例外にするので、ここで 413 にする

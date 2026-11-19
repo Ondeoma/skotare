@@ -19,7 +19,7 @@ Scala 3（http4s・doobie・PostgreSQL）、画面は Scala.js + [Scalactive](ht
 - **ステータスページ**（`/s/{名前}`）: ゲストに、名前・状態・90日の稼働率の帯・発生中と過去14日の障害・お知らせ（メンテナンスの予定など）を見せる。
   監視の URL・ホストは見せない。ページでの名前を付け替えられる。ログインした人だけに見せるページも作れる
 - **通知**: 停止・復旧したとき、停止中に設定を変えて障害を閉じたとき、拠点の異常・回復のときに
-  - **[stui](https://github.com/Ondeoma/stui)**（チャット）: チャンネルの受信 Webhook に投稿
+  - **[stui](https://github.com/Ondeoma/stui)**（チャット）: stui と連携して、参加しているチャンネルを選んで投稿（または、チャンネルの受信 Webhook に投稿）
   - **[skereru](https://github.com/Ondeoma/skereru)**（メール）: skereru の送信 API（APIキー・send のスコープ）でメールを送る
   - **Webhook**: 任意の URL に JSON を POST（`event`・`status`・`monitor`・`message`・`at`・`downSince`・`url`）
   - **プッシュ通知**（PWA）: 受け取ると決めた端末に
@@ -117,6 +117,7 @@ DB はすべての拠点から届く場所に置き、冗長にします（DB �
 | `REGION` | このノードの拠点の名前（既定 `default`。同じ場所のノードは同じ名前にする。例 `tokyo`・`osaka`） |
 | `CHECK_CONCURRENCY` | 1台で同時に確かめる数（既定 16、1〜256） |
 | `APP_SECRET` | 通知先の秘密の値（stui の Webhook の URL・skereru の APIキー）を暗号化する鍵（16文字以上。全ノードで同じ値にする。通知先を使うときは必須） |
+| `STUI_URL`・`STUI_CLIENT_ID`・`STUI_CLIENT_SECRET` | stui との連携（通知先に stui のチャンネルを選ぶ）。stui の `OAUTH_CLIENTS` に skotare を登録し（`redirectUri` は `{PUBLIC_URL}/api/integrations/stui/callback`、`scopes` は `["read","write"]`）、その id・secret を入れる。`STUI_INTERNAL_URL` はサーバーから呼ぶ URL（省くと `STUI_URL`） |
 | `OAUTH_CLIENTS` | skotare を利用者の権限で使うサービス（OAuth のクライアント）。`[{"id":"skakapo","secret":"…（16文字以上）","redirectUri":"https://…/api/connections/callback","name":"skakapo","scopes":["read","write"]}]`（`scopes` を省くと `read` だけ） |
 | `RATE_LIMIT_AUTH` / `RATE_LIMIT_PUBLIC` | IP ごとの1分あたりの回数の上限。ログイン・OAuth の認可（`/auth/…`・`/oauth/…`、既定 20）とステータスページ（`/api/public/…`、既定 120）。0 で制限しない |
 | `TRUSTED_PROXIES` | リバースプロキシの IP か CIDR（カンマ区切り）。そこから来た要求だけ `X-Forwarded-For` から利用者の IP を読む |
@@ -135,7 +136,12 @@ DB はすべての拠点から届く場所に置き、冗長にします（DB �
 skotare は、同じ技術で作っている兄弟プロジェクト（[stui](https://github.com/Ondeoma/stui)・[skereru](https://github.com/Ondeoma/skereru)・
 [skorimako](https://github.com/Ondeoma/skorimako) など）と連携できます。どれも任意で、使わなくても skotare だけで動きます。
 
-- **stui**: stui のチャンネルの設定 →「受信 Webhook」で URL を作り、skotare の「通知先」に stui として登録します。
+- **stui**: skotare の「通知先」で stui と連携し（OAuth）、通知先を追加するときに、自分が参加しているチャンネルを一覧から選びます。
+  通知は、その通知先を作った人の連携（トークン）で、stui のボット「skotare」として投稿します（stui の `POST /api/apps/notify`）。
+  作った人が連携をやめたりチャンネルを抜けたりすると送れなくなるので、ほかの人が通知先を開いてチャンネルを選び直します（その人の連携で投稿するようになります）。
+  自分がチャンネルの管理者なら、「受信 Webhook を作って送る」も選べます（skotare が連携のトークンでそのチャンネルに受信 Webhook を作り、その URL で送ります。
+  作ったあとは、連携をやめても届きます。通知先を消したり送り方を替えたりすると、作った Webhook も消します）。
+  連携を使わず、stui のチャンネルの設定 →「受信 Webhook」で作った URL を登録することもできます。
 - **skereru**: skereru の「設定 → APIキー・MCP」で send のスコープの APIキーを発行し、skotare の「通知先」に skereru の URL・差出人・宛先と一緒に登録します。
 - **skorimako**: 上の `OTEL_*`・`SKORIMAKO_RUM_*` を設定します。
 - **skakapo**（AI エージェント）: skotare を OAuth の提供側として使います。`OAUTH_CLIENTS` に skakapo を登録し（`redirectUri` は skakapo の `…/api/connections/callback`）、

@@ -96,6 +96,9 @@ object Config:
       oidc = oidc,
       api = ApiConfig(cookieSecure = pub.startsWith("https://"), publicUrl = pub, sessionTtl = int("SESSION_DAYS").getOrElse(14).days,
         devLogin = devLogin, oauthClients = clients,
+        // STUI_URL・STUI_CLIENT_ID・STUI_CLIENT_SECRET（STUI_INTERNAL_URL はサーバーから呼ぶ URL）. 通知先に stui のチャンネルを選べるようにする
+        stui = (opt("STUI_URL"), opt("STUI_CLIENT_ID"), opt("STUI_CLIENT_SECRET")).mapN((u, id, sec) =>
+          LinkService("stui", u.stripSuffix("/"), id, sec, opt("STUI_INTERNAL_URL").map(_.stripSuffix("/")))),
         rateLimit = RateLimitConfig(int("RATE_LIMIT_AUTH").getOrElse(20), int("RATE_LIMIT_PUBLIC").getOrElse(120), proxies)),
       staticDir = opt("STATIC_DIR"),
       appSecret = secret,
@@ -135,7 +138,8 @@ object Main extends IOApp.Simple:
         notifiers = new NotifierStore(xa)
         pages     = new PageStore(xa)
         nodes     = new NodeStore(xa)
-        senders   = new Senders(http, box, cfg.api.publicUrl)
+        stui      = new StuiLink(cfg.api.stui, new IntegrationTokenStore(xa), http, box, cfg.api.publicUrl, sess)
+        senders   = new Senders(http, box, cfg.api.publicUrl, Some(stui))
         _ <- Resource.eval(IO.whenA(oidc.isEmpty)(skotare.observe.Log.println("[skotare] WARNING: OIDC が未設定です。開発用のログイン（DEV_LOGIN）を使います。本番では使わないでください")))
         _ <- Resource.eval(IO.whenA(box.isEmpty)(skotare.observe.Log.println("[skotare] WARNING: APP_SECRET が未設定のため、通知先（stui・skereru・Webhook）を使えません")))
         // OIDC の設定の誤り（issuer の URL など）は起動時に知らせる（IdP が止まっていても起動はする）
@@ -151,8 +155,8 @@ object Main extends IOApp.Simple:
         _ <- purgeLoop(users).background
         _ <- worker.run.background
         web <- Resource.eval(cfg.staticDir.traverse(spa))
-        routes = new MonitorRoutes(monitors, notifiers, pages, nodes, senders, box, sess, announcer)
-        all = ApiRoutes(oidc, users, sess, cfg.api, routes, Some(pushStore -> push)) <+>
+        routes = new MonitorRoutes(monitors, notifiers, pages, nodes, senders, box, sess, announcer, Some(stui))
+        all = ApiRoutes(oidc, users, sess, cfg.api, routes, Some(pushStore -> push), stui.routes) <+>
                 healthRoutes(xa) <+> RumRoutes.routes <+> web.getOrElse(HttpRoutes.empty[IO])
         // セキュリティのヘッダーは、見つからない 404・内部エラーの 500 にも付ける
         httpApp <- HttpTelemetry(SecurityHeaders.app(ErrorHandling.Custom.recoverWith(all.orNotFound)(handler), cfg.api.cookieSecure),

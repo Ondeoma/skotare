@@ -82,8 +82,8 @@ object Senders:
     case _: IllegalArgumentException | _: IllegalStateException => Option(e.getMessage).getOrElse("設定が正しくありません")
     case _ => Option(e.getMessage).filter(_.startsWith("HTTP ")).getOrElse(e.getClass.getSimpleName)
 
-/** 通知先へ送る（stui の受信 Webhook・skereru の送信 API・汎用の Webhook）. */
-final class Senders(http: Client[IO], box: Option[SecretBox], val publicUrl: String):
+/** 通知先へ送る（stui のチャンネル・stui の受信 Webhook・skereru の送信 API・汎用の Webhook）. */
+final class Senders(http: Client[IO], box: Option[SecretBox], val publicUrl: String, stui: Option[StuiLink] = None):
 
   private def secretOf(n: NotifierRow): Either[String, String] =
     if n.secret.isEmpty then Left("秘密の値（URL・APIキー）が設定されていません")
@@ -99,9 +99,10 @@ final class Senders(http: Client[IO], box: Option[SecretBox], val publicUrl: Str
       }.timeout(20.seconds)
     }
 
-  def send(n: NotifierRow, payload: Json): IO[Unit] =
+  /** 秘密の値（URL・APIキー）で送るもの. */
+  private def withSecret(n: NotifierRow, payload: Json): IO[Unit] =
     IO.fromEither(secretOf(n).left.map(new IllegalStateException(_))).flatMap { secret =>
-      Telemetry.span("notify.send", "kind" -> n.kind)(n.kind match
+      n.kind match
         // stui: チャンネルの受信 Webhook（本文は Markdown）
         case NotifierKind.Stui =>
           post(secret, Json.obj("text" -> Messages.body(payload).asJson, "username" -> "skotare".asJson,
@@ -114,8 +115,15 @@ final class Senders(http: Client[IO], box: Option[SecretBox], val publicUrl: Str
             "subject" -> s"[skotare] ${Messages.subject(payload)}".asJson, "text" -> text.asJson, "html" -> Json.Null,
             "uploadIds" -> Json.arr(), "inReplyTo" -> Json.Null, "forwardOf" -> Json.Null, "draftId" -> Json.Null), Some(secret))
         case _ => post(secret, payload)
-      ) <* Metrics.count("skotare.notifications.sent", "kind" -> n.kind)
     }
+
+  def send(n: NotifierRow, payload: Json): IO[Unit] =
+    Telemetry.span("notify.send", "kind" -> n.kind)(
+      // stui のチャンネル: 作った人のトークンで、ボット「skotare」として投稿する（本文は Markdown）
+      if n.kind == NotifierKind.Stui && n.config.stuiChannel then
+        stui.fold(IO.raiseError[Unit](new IllegalStateException("stui との連携が設定されていません")))(_.post(n, Messages.body(payload)))
+      else withSecret(n, payload)
+    ) <* Metrics.count("skotare.notifications.sent", "kind" -> n.kind)
 
   /** 試しに送る本文. */
   def testPayload(n: NotifierRow): Json = Json.obj(

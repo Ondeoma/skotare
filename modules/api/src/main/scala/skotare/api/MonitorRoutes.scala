@@ -16,7 +16,7 @@ import scala.concurrent.duration.*
 
 /** 監視・障害・通知先・ステータスページ（管理）と、ゲストに見せるステータスページ. */
 final class MonitorRoutes(monitors: MonitorStore, notifiers: NotifierStore, pages: PageStore, nodes: NodeStore, senders: Senders,
-    box: Option[SecretBox], val sessions: SessionAuth, announcer: Announcer) extends RouteSupport:
+    box: Option[SecretBox], val sessions: SessionAuth, announcer: Announcer, stui: Option[StuiLink] = None) extends RouteSupport:
 
   // ------------------------------------------------------------------ 入力の確かめ
 
@@ -47,6 +47,14 @@ final class MonitorRoutes(monitors: MonitorStore, notifiers: NotifierStore, page
       name <- Check.name(r.name)
       _    <- Either.cond(r.monitorIds.size <= 1000, (), "選べる監視は1000件までです")
       _    <- Either.cond(NotifierKind.all.contains(r.kind), (), s"種類は ${NotifierKind.all.mkString("・")} のどれかです")
+      // stui のチャンネル: トークンで投稿するなら秘密の値は使わない（前の受信 Webhook の URL は消す）. 投稿する人・作る Webhook は prepare で決める
+      stuiCh = r.kind == NotifierKind.Stui && r.config.channelId.isDefined
+      res  <- if stuiCh then Right((NotifierConfig(channelId = r.config.channelId), Option.unless(r.hook)(""))) else secretNotifier(r, current, secret)
+    yield (r.copy(name = name, config = res._1, secret = None), res._2)
+
+  /** 秘密の値（受信 Webhook の URL・skereru の API キー・Webhook の URL）で送る通知先. */
+  private def secretNotifier(r: NotifierReq, current: Option[NotifierRow], secret: Option[String]): Either[String, (NotifierConfig, Option[String])] =
+    for
       _    <- if r.kind == NotifierKind.Skereru then secret.traverse_(s => Either.cond(s.length <= 500, (), "APIキーが長すぎます"))
               else secret.traverse_(httpUrl(_, NotifierKind.secretLabel(r.kind)))
       cfg  <- if r.kind != NotifierKind.Skereru then Right(NotifierConfig())
@@ -61,7 +69,59 @@ final class MonitorRoutes(monitors: MonitorStore, notifiers: NotifierStore, page
                 if current.isEmpty then s"${NotifierKind.secretLabel(r.kind)}を入れてください"
                 else s"種類や送り先を変えるときは、${NotifierKind.secretLabel(r.kind)}も入れ直してください")
       enc  <- secret.traverse(s => box.toRight("通知先の秘密の値を保存するには APP_SECRET（16文字以上）を設定してください").map(_.encrypt(s)))
-    yield (r.copy(name = name, config = cfg, secret = None), enc)
+    yield (cfg, enc)
+
+  /** 通知先の入力を確かめ、stui のチャンネルなら投稿する人・受信 Webhook を決める. (保存する内容, 秘密の値（None なら今のまま）). */
+  private def prepare(u: User, current: Option[NotifierRow], r: NotifierReq): IO[Either[String, (NotifierReq, Option[String])]] =
+    validNotifier(r, current) match
+      case Left(e) => IO.pure(Left(e))
+      case Right((n, enc)) => n.config.channelId match
+        case None             => IO.pure(Right((n, enc)))
+        case Some(ch) if r.hook => stuiHook(u, current, n, ch)
+        case Some(_)          => stuiOwner(u, current, n).map(_.map(_ -> enc))
+
+  /**
+   * stui のチャンネルに、受信 Webhook を作って送る通知先. 前と同じチャンネルの Webhook なら、そのまま使う.
+   * 作れるのは、変えた人がそのチャンネルの管理者のときだけ（stui も確かめる）. 作った URL は秘密の値として暗号化して保存する.
+   */
+  private def stuiHook(u: User, current: Option[NotifierRow], n: NotifierReq, ch: UUID): IO[Either[String, (NotifierReq, Option[String])]] =
+    current.filter(c => c.kind == NotifierKind.Stui && c.config.stuiHook && c.config.channelId.contains(ch) && c.secret.nonEmpty) match
+      case Some(c) => IO.pure(Right((n.copy(config = c.config), None)))
+      case None =>
+        (stui, box) match
+          case (None, _) => IO.pure(Left("stui との連携が設定されていません"))
+          case (_, None) => IO.pure(Left("通知先の秘密の値を保存するには APP_SECRET（16文字以上）を設定してください"))
+          case (Some(s), Some(b)) =>
+            s.channels(u.id).flatMap {
+              case Left(e) => IO.pure(Left(e))
+              case Right(cs) => cs.find(_.id == ch) match
+                case None => IO.pure(Left("そのチャンネルは選べません（stui で参加しているチャンネルから選んでください）"))
+                case Some(c) if !c.admin => IO.pure(Left("受信 Webhook を作れるのは、チャンネルの管理者だけです"))
+                case Some(c) => s.createHook(u.id, ch, n.name).map(_.map((hookId, url) =>
+                    (n.copy(config = NotifierConfig(channelId = Some(ch), channelName = c.name, hookId = Some(hookId))), Some(b.encrypt(url)))))
+            }
+
+  /** 前に作った受信 Webhook を、使わなくなったら消す（消した人がチャンネルの管理者のときだけ消せる. 消せなくても続ける）. */
+  private def dropHook(u: User, before: Option[NotifierRow], after: Option[NotifierConfig]): IO[Unit] =
+    (stui, before.flatMap(_.config.hookId).filterNot(h => after.exists(_.hookId.contains(h)))).tupled.traverse_((s, h) => s.deleteHook(u.id, h))
+
+  /**
+   * stui のチャンネルを選んだ通知先の、投稿する人（connectedBy）とチャンネルの名前を決める.
+   * 前と同じチャンネルで、前に選んだ人がまだ連携していれば、その人のまま（ほかの人が監視の選択だけを変えられるように）.
+   * そうでなければ、変えた人が連携していて、そのチャンネルに参加している必要がある（その人のトークンで投稿する）.
+   */
+  private def stuiOwner(u: User, current: Option[NotifierRow], n: NotifierReq): IO[Either[String, NotifierReq]] =
+    n.config.channelId match
+      case None => IO.pure(Right(n))
+      case Some(ch) =>
+        val prev = current.filter(c => c.kind == NotifierKind.Stui && c.config.channelId.contains(ch)).flatMap(c => c.config.connectedBy.map(_ -> c.config))
+        stui.fold(IO.pure(false))(s => prev.fold(IO.pure(false))(p => s.connected(p._1))).flatMap {
+          case true => IO.pure(Right(n.copy(config = prev.get._2)))
+          case false =>
+            stui.fold(IO.pure(Left("stui との連携が設定されていません"): Either[String, List[StuiChannelDto]]))(_.channels(u.id)).map(_.flatMap(cs =>
+              cs.find(_.id == ch).toRight("そのチャンネルは選べません（stui で参加しているチャンネルから選んでください）")
+                .map(c => n.copy(config = NotifierConfig(channelId = Some(c.id), channelName = c.name, connectedBy = Some(u.id))))))
+        }
 
   private def validPage(r: StatusPageReq): Either[String, StatusPageReq] =
     for
@@ -164,18 +224,18 @@ final class MonitorRoutes(monitors: MonitorStore, notifiers: NotifierStore, page
     case req @ GET -> Root / "api" / "notifiers" => authed(req)(_ => notifiers.list.flatMap(ns => Ok(ns.map(_.dto))))
 
     case req @ POST -> Root / "api" / "notifiers" =>
-      authed(req)(_ => body[NotifierReq](req)(r => valid(validNotifier(r, None))((n, s) =>
-        notifiers.save(None, n, s).flatMap(x => Created(x.get.dto)))))
+      authed(req)(u => body[NotifierReq](req)(r => prepare(u, None, r).flatMap(valid(_)((n, s) =>
+        notifiers.save(None, n, s).flatMap(x => Created(x.get.dto))))))
 
     case req @ PUT -> Root / "api" / "notifiers" / UuidVar(id) =>
-      authed(req)(_ => notifiers.find(id).flatMap {
+      authed(req)(u => notifiers.find(id).flatMap {
         case None => err(Status.NotFound, "通知先が見つかりません")
-        case cur  => body[NotifierReq](req)(r => valid(validNotifier(r, cur))((n, s) =>
-          notifiers.save(Some(id), n, s).flatMap(_.fold(err(Status.NotFound, "通知先が見つかりません"))(x => Ok(x.dto)))))
+        case cur  => body[NotifierReq](req)(r => prepare(u, cur, r).flatMap(valid(_)((n, s) =>
+          notifiers.save(Some(id), n, s).flatMap(_.fold(err(Status.NotFound, "通知先が見つかりません"))(x => dropHook(u, cur, Some(x.config)) *> Ok(x.dto))))))
       })
 
     case req @ DELETE -> Root / "api" / "notifiers" / UuidVar(id) =>
-      authed(req)(_ => notifiers.delete(id).ifM(NoContent(), err(Status.NotFound, "通知先が見つかりません")))
+      authed(req)(u => notifiers.find(id).flatMap(cur => notifiers.delete(id).ifM(dropHook(u, cur, None) *> NoContent(), err(Status.NotFound, "通知先が見つかりません"))))
 
     // 試しに送る（行列を通さず、その場で送って結果を返す）
     case req @ POST -> Root / "api" / "notifiers" / UuidVar(id) / "test" =>

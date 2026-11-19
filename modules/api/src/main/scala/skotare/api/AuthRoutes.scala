@@ -112,7 +112,7 @@ final class AuthRoutes(oidc: Option[OidcClient], users: UserStore, val sessions:
       }
 
     case GET -> Root / "api" / "client-config" =>
-      Ok(ClientConfigDto(cfg.devLogin && oidc.isEmpty, oidc.isDefined, cfg.version))
+      Ok(ClientConfigDto(cfg.devLogin && oidc.isEmpty, oidc.isDefined, cfg.version, cfg.stui.isDefined))
 
     case req @ GET -> Root / "api" / "me" => authed(req)(u => Ok(u.me))
 

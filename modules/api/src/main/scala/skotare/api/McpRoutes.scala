@@ -34,10 +34,12 @@ object ApiCatalog:
     Endpoint("GET", "/api/incidents?open=true&monitor={id}&limit=", "障害の一覧（新しい順）"),
     Endpoint("GET", "/api/notifiers", "通知先の一覧（秘密の値は返さない）"),
     Endpoint("POST", "/api/notifiers", "通知先を作る {name, kind: stui|skereru|webhook, secret（stui の受信 Webhook の URL・skereru の APIキー・Webhook の URL）, " +
-      "config: {baseUrl（skereru の URL）, from, to: [メール]}, allMonitors, monitorIds, enabled}"),
+      "config: {baseUrl（skereru の URL）, from, to: [メール], channelId（stui のチャンネル. 指定すると secret は要らず、呼んだ人の stui との連携で投稿する）}, allMonitors, monitorIds, enabled}"),
     Endpoint("PUT", "/api/notifiers/{id}", "通知先を変える（secret は変えるときだけ）"),
     Endpoint("DELETE", "/api/notifiers/{id}", "通知先を削除する"),
     Endpoint("POST", "/api/notifiers/{id}/test", "通知先に試しに送る"),
+    Endpoint("GET", "/api/integrations", "外部のサービスとの連携（stui）と、自分が連携しているか"),
+    Endpoint("GET", "/api/integrations/stui/channels", "通知先に選べる stui のチャンネル（自分が参加しているもの. stui と連携している必要がある）"),
     Endpoint("GET", "/api/pages", "ステータスページの一覧"),
     Endpoint("POST", "/api/pages", "ステータスページを作る {slug, title, description, notice（お知らせ）, public, items: [{monitorId, displayName?}]}"),
     Endpoint("PUT", "/api/pages/{id}", "ステータスページを変える（本文は作成と同じ）"),

@@ -22,7 +22,8 @@ object SafePath {
   def of(s: Option[String], default: String = "/"): String = s.map(_.trim).filter(re.matches).getOrElse(default)
 }
 
-final case class ClientConfigDto(devLogin: Boolean, oidc: Boolean, version: String) derives Encoder.AsObject, Decoder
+/** stui は stui との連携（通知先にチャンネルを選ぶ）を設定しているか. */
+final case class ClientConfigDto(devLogin: Boolean, oidc: Boolean, version: String, stui: Boolean = false) derives Encoder.AsObject, ConfiguredDecoder
 
 final case class UserBrief(id: UUID, name: String, email: Option[String], avatarUrl: Option[String]) derives Encoder.AsObject, Decoder
 
@@ -241,7 +242,7 @@ final case class ProbeResultDto(ok: Boolean, latencyMs: Option[Int], message: St
 
 // ------------------------------------------------------------------ 通知先
 
-/** 通知先の種類. stui は受信 Webhook の URL、skereru は API キーでメールを送る、webhook は任意の URL に JSON を POST する. */
+/** 通知先の種類. stui は連携して選んだチャンネル（または受信 Webhook の URL）、skereru は API キーでメールを送る、webhook は任意の URL に JSON を POST する. */
 object NotifierKind {
   val Stui    = "stui"
   val Skereru = "skereru"
@@ -260,15 +261,36 @@ object NotifierKind {
   }
 }
 
-/** 秘密でない設定. skereru の baseUrl（skereru の URL）・from（差出人）・to（宛先）. */
-final case class NotifierConfig(baseUrl: String = "", from: String = "", to: List[String] = Nil) derives Encoder.AsObject, ConfiguredDecoder
+/**
+ * 秘密でない設定. skereru の baseUrl（skereru の URL）・from（差出人）・to（宛先）.
+ * stui でチャンネルを選んだときは channelId・channelName（stui のチャンネル）. 送り方は2つ（どちらもサーバーが決める）:
+ *  - connectedBy: その人の stui のトークンで、ボット「skotare」として投稿する
+ *  - hookId: チャンネルの管理者が、連携して作った受信 Webhook（その URL を秘密の値として保存し、そこへ送る）
+ * channelId がなければ、入力した秘密の値（受信 Webhook の URL）へ送る.
+ */
+final case class NotifierConfig(baseUrl: String = "", from: String = "", to: List[String] = Nil, channelId: Option[UUID] = None,
+    channelName: String = "", connectedBy: Option[UUID] = None, hookId: Option[UUID] = None) derives Encoder.AsObject, ConfiguredDecoder {
+  /** トークンで投稿する（受信 Webhook を作っていない）チャンネル. */
+  def stuiChannel: Boolean = channelId.isDefined && hookId.isEmpty
+  /** 連携して作った受信 Webhook で送るチャンネル. */
+  def stuiHook: Boolean = channelId.isDefined && hookId.isDefined
+}
 
-/** secret は変えるときだけ送る（None なら今のまま）. */
+/**
+ * secret は変えるときだけ送る（None なら今のまま）.
+ * hook は stui のチャンネル（config.channelId）を、受信 Webhook を作って送るか（自分がチャンネルの管理者のときだけ. 前と同じチャンネルなら作り直さない）.
+ */
 final case class NotifierReq(name: String, kind: String, config: NotifierConfig, secret: Option[String], allMonitors: Boolean = true,
-    monitorIds: List[UUID] = Nil, enabled: Boolean = true) derives Encoder.AsObject, ConfiguredDecoder
+    monitorIds: List[UUID] = Nil, enabled: Boolean = true, hook: Boolean = false) derives Encoder.AsObject, ConfiguredDecoder
 
 final case class NotifierDto(id: UUID, name: String, kind: String, config: NotifierConfig, hasSecret: Boolean, allMonitors: Boolean,
     monitorIds: List[UUID], enabled: Boolean) derives Encoder.AsObject, Decoder
+
+/** 外部のサービスとの連携（stui）. connected は自分が連携しているか. */
+final case class IntegrationDto(provider: String, name: String, url: String, connected: Boolean) derives Encoder.AsObject, Decoder
+
+/** 通知先に選べる stui のチャンネル（自分が参加していて、アーカイブしていないもの）. kind は public・private. admin は自分がチャンネルの管理者か（受信 Webhook を作れる）. */
+final case class StuiChannelDto(id: UUID, name: String, kind: String, admin: Boolean = false) derives Encoder.AsObject, ConfiguredDecoder
 
 // ------------------------------------------------------------------ ステータスページ
 

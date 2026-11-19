@@ -9,7 +9,7 @@ import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client
 import org.http4s.ember.server.EmberServerBuilder
-import org.http4s.headers.{Authorization, Cookie, Location}
+import org.http4s.headers.{`WWW-Authenticate`, Authorization, Cookie, Location}
 import org.http4s.implicits.*
 import org.typelevel.ci.CIString
 import skotare.auth.{OidcClient, OidcConfig, SecretBox}
@@ -46,11 +46,39 @@ class FlowSpec extends munit.CatsEffectSuite:
       if healthy.get then Ok("""{"status":"ok"}""") else ServiceUnavailable("maintenance")
     }
 
-  /** 偽の stui（受信 Webhook）と skereru（送信 API）. 受けた要求を残す. */
+  /** 偽の stui のチャンネル（ops は参加中で管理者、dev は参加中、old はアーカイブ済み、DM は選べない）. */
+  private val opsId = UUID.fromString("00000000-0000-0000-0000-0000000000a1")
+  private val devId = UUID.fromString("00000000-0000-0000-0000-0000000000a3")
+  private val hookId = UUID.fromString("00000000-0000-0000-0000-0000000000b1")
+  private val oldId = UUID.fromString("00000000-0000-0000-0000-0000000000a2")
+  private val stuiToken = "stui-token-1"
+
+  /** 偽の stui（受信 Webhook・OAuth・チャンネルの一覧・連携サービスからの通知）と skereru（送信 API）. 受けた要求を残す. */
   private val received = new ConcurrentLinkedQueue[(String, Json, Option[String])]()
   private val fakeSiblings: HttpRoutes[IO] =
     import org.http4s.dsl.io.*
-    HttpRoutes.of[IO] { case r @ POST -> path =>
+    def authed(r: Request[IO]) = r.headers.get[Authorization].exists(_.credentials == Credentials.Token(AuthScheme.Bearer, stuiToken))
+    HttpRoutes.of[IO] {
+      case r @ POST -> Root / "oauth" / "token" =>
+        r.as[UrlForm].flatMap(f => if f.getFirst("code").contains("good-code") && f.getFirst("code_verifier").isDefined
+          then Ok(Json.obj("access_token" -> stuiToken.asJson)) else BadRequest(Json.obj("error" -> "invalid_grant".asJson)))
+      case POST -> Root / "oauth" / "revoke" => Ok()
+      case r @ GET -> Root / "api" / "channels" =>
+        if !authed(r) then Unauthorized(`WWW-Authenticate`(Challenge("Bearer", "stui")))
+        else Ok(Json.arr(
+          Json.obj("id" -> opsId.asJson, "name" -> "ops".asJson, "kind" -> "public".asJson, "archived" -> false.asJson, "member" -> true.asJson, "role" -> "admin".asJson),
+          Json.obj("id" -> devId.asJson, "name" -> "dev".asJson, "kind" -> "public".asJson, "archived" -> false.asJson, "member" -> true.asJson, "role" -> "member".asJson),
+          Json.obj("id" -> oldId.asJson, "name" -> "old".asJson, "kind" -> "private".asJson, "archived" -> true.asJson, "member" -> true.asJson),
+          Json.obj("id" -> UUID.randomUUID().asJson, "name" -> "dm".asJson, "kind" -> "dm".asJson, "archived" -> false.asJson, "member" -> true.asJson)))
+      // 受信 Webhook を作る（URL は利用者向けの公開 URL で返す）・消す
+      case r @ POST -> Root / "api" / "hooks" / "incoming" =>
+        r.as[Json].flatMap(j => if !authed(r) then Unauthorized(`WWW-Authenticate`(Challenge("Bearer", "stui")))
+          else if j.hcursor.get[UUID]("channelId").contains(opsId) then
+            IO(received.add(("/api/hooks/incoming", j, None))) *> Created(Json.obj("hook" -> Json.obj("id" -> hookId.asJson), "url" -> "https://stui.test/hooks/tok-1".asJson))
+          else Forbidden(Json.obj("error" -> "チャンネルの管理者だけが変えられます".asJson)))
+      case r @ DELETE -> path =>
+        IO(received.add((s"DELETE ${path.renderString}", Json.Null, r.headers.get[Authorization].map(_.credentials.toString)))) *> NoContent()
+      case r @ POST -> path =>
       r.as[Json].flatMap { j =>
         val auth = r.headers.get[Authorization].map(_.credentials.toString)
         IO(received.add((path.renderString, j, auth))) *> Ok(Json.obj("ok" -> true.asJson))
@@ -78,10 +106,14 @@ class FlowSpec extends munit.CatsEffectSuite:
     val pages = new PageStore(xa); val nodes = new NodeStore(xa)
     val sess  = new SessionAuth(users, apiCfg)
     val box   = Some(new SecretBox("test-app-secret-0123456789"))
-    val senders = new Senders(Client.fromHttpApp(fakeSiblings.orNotFound), box, apiCfg.publicUrl)
+    val siblings = Client.fromHttpApp(fakeSiblings.orNotFound)
+    val stui    = new StuiLink(Some(LinkService("stui", "https://stui.test", "skotare", "skotare-test-secret-0123456789")), new IntegrationTokenStore(xa),
+                    siblings, box, apiCfg.publicUrl, sess)
+    val senders = new Senders(siblings, box, apiCfg.publicUrl, Some(stui))
     val announcer = new Announcer(None, apiCfg.publicUrl)
     val worker  = new Worker(monitors, notifiers, nodes, senders, announcer, WorkerConfig("node-a", apiCfg.publicUrl, "test"))
-    val app = ApiRoutes(Some(oidc), users, sess, apiCfg, new MonitorRoutes(monitors, notifiers, pages, nodes, senders, box, sess, announcer)).orNotFound
+    val app = ApiRoutes(Some(oidc), users, sess, apiCfg, new MonitorRoutes(monitors, notifiers, pages, nodes, senders, box, sess, announcer, Some(stui)),
+                extra = stui.routes).orNotFound
     Env(idp.routes.orNotFound, app, xa, worker, monitors, nodes, s"http://127.0.0.1:${srv.address.port.value}/health"))
 
   override def munitFixtures = List(fixture)
@@ -226,6 +258,93 @@ class FlowSpec extends munit.CatsEffectSuite:
       _   = assertEquals(d3.checks.map(_.node).distinct, List("node-a"))
       is <- call(t, Method.GET, "/api/incidents?open=true").flatMap(json[List[IncidentDto]])
       _   = assertEquals(is, Nil)
+    yield ()
+  }
+
+  test("stui と連携し、参加しているチャンネルを通知先に選ぶと、作った人のトークンでボットとして投稿する") {
+    def start(t: String) =
+      call(t, Method.GET, "/api/integrations/stui/connect?returnTo=/notifiers").map { r =>
+        assertEquals(r.status, Status.Found)
+        val u = location(r)
+        assertEquals(u.renderString.takeWhile(_ != '?'), "https://stui.test/oauth/authorize")
+        assertEquals(u.params.get("code_challenge_method"), Some("S256"))
+        assertEquals(u.params.get("redirect_uri"), Some("http://localhost:8114/api/integrations/stui/callback"))
+        u.params("state")
+      }
+    def back(t: String, state: String) = call(t, Method.GET, s"/api/integrations/stui/callback?state=$state&code=good-code").map(location(_).renderString)
+    val notifier = (ch: UUID) => NotifierReq("", NotifierKind.Stui, NotifierConfig(channelId = Some(ch)), None)
+    for
+      a   <- login("連携 太郎", "renkei@example.com")
+      b   <- login("ほか 花子", "hoka@example.com")
+      is  <- call(a, Method.GET, "/api/integrations").flatMap(json[List[IntegrationDto]])
+      _    = assertEquals(is.map(i => i.provider -> i.connected), List("stui" -> false))
+      // 連携していなければ、チャンネルは選べない
+      n0  <- call(a, Method.GET, "/api/integrations/stui/channels")
+      _    = assertEquals(n0.status, Status.Conflict)
+      // ほかの人が始めた連携を、自分のアカウントに結び付けられない
+      s0  <- start(a)
+      x   <- back(b, s0)
+      _    = assertEquals(x, "/notifiers?integration=stui&result=error")
+      s1  <- start(a)
+      ok  <- back(a, s1)
+      _    = assertEquals(ok, "/notifiers?integration=stui&result=connected")
+      // state は一度だけ
+      again <- back(a, s1)
+      _    = assertEquals(again, "/notifiers?integration=stui&result=expired")
+      cs  <- call(a, Method.GET, "/api/integrations/stui/channels").flatMap(json[List[StuiChannelDto]])
+      _    = assertEquals(cs.map(c => c.name -> c.admin), List("dev" -> false, "ops" -> true))
+      // 選べないチャンネル（アーカイブ済み）は断る
+      bad <- call(a, Method.POST, "/api/notifiers", Some(notifier(oldId).copy(name = "古い").asJson))
+      _    = assertEquals(bad.status, Status.BadRequest)
+      n   <- call(a, Method.POST, "/api/notifiers", Some(notifier(opsId).copy(name = "運用", secret = Some("https://ignored.test/x")).asJson))
+               .flatMap(json[NotifierDto])
+      me  <- call(a, Method.GET, "/api/me").flatMap(json[MeDto])
+      _    = assertEquals(n.config.channelName, "ops")
+      _    = assertEquals(n.config.connectedBy, Some(me.id))
+      _    = assert(!n.hasSecret, "チャンネルを選んだら秘密の値は使わない")
+      _   <- IO(received.clear())
+      t   <- call(b, Method.POST, s"/api/notifiers/${n.id}/test")
+      _    = assertEquals(t.status, Status.NoContent)
+      sent = received.toArray.toList.asInstanceOf[List[(String, Json, Option[String])]]
+      _    = assertEquals(sent.map(_._1), List("/api/apps/notify"))
+      _    = assertEquals(sent.head._2.hcursor.get[String]("channel"), Right(opsId.toString))
+      _    = assert(sent.head._2.hcursor.get[String]("text").exists(_.contains("テスト")), sent.head._2.noSpaces)
+      _    = assertEquals(sent.head._3, Some(s"Bearer $stuiToken"))
+      // チャンネルの管理者なら、受信 Webhook を作ってその URL で送れる（管理者でないチャンネルには作れない）
+      nh  <- call(a, Method.POST, "/api/notifiers", Some(notifier(devId).copy(name = "開発", hook = true).asJson))
+      _    = assertEquals(nh.status, Status.BadRequest)
+      _   <- IO(received.clear())
+      h   <- call(a, Method.POST, "/api/notifiers", Some(notifier(opsId).copy(name = "運用（Webhook）", hook = true).asJson)).flatMap(json[NotifierDto])
+      _    = assertEquals((h.config.hookId, h.config.channelName, h.config.connectedBy, h.hasSecret), (Some(hookId), "ops", None, true))
+      ht  <- call(a, Method.POST, s"/api/notifiers/${h.id}/test")
+      _    = assertEquals(ht.status, Status.NoContent)
+      hs   = received.toArray.toList.asInstanceOf[List[(String, Json, Option[String])]]
+      _    = assertEquals(hs.map(_._1), List("/api/hooks/incoming", "/hooks/tok-1"))
+      _    = assertEquals(hs.last._2.hcursor.get[String]("username"), Right("skotare"))
+      // 同じチャンネルのまま変えても作り直さない. トークンでの投稿に替えると、作った Webhook を消す
+      _   <- IO(received.clear())
+      h2  <- call(a, Method.PUT, s"/api/notifiers/${h.id}", Some(notifier(opsId).copy(name = "運用（Webhook・改）", hook = true).asJson)).flatMap(json[NotifierDto])
+      _    = assertEquals(h2.config.hookId, Some(hookId))
+      _    = assertEquals(received.size, 0)
+      h3  <- call(a, Method.PUT, s"/api/notifiers/${h.id}", Some(notifier(opsId).copy(name = "運用（トークン）").asJson)).flatMap(json[NotifierDto])
+      _    = assertEquals((h3.config.hookId, h3.hasSecret), (None, false))
+      _    = assertEquals(received.toArray.toList.asInstanceOf[List[(String, Json, Option[String])]].map(_._1), List(s"DELETE /api/hooks/incoming/$hookId"))
+      _   <- call(a, Method.DELETE, s"/api/notifiers/${h.id}")
+      // 連携していない人も、同じチャンネルのまま監視の選択などは変えられる（投稿する人は変わらない）
+      u1  <- call(b, Method.PUT, s"/api/notifiers/${n.id}", Some(notifier(opsId).copy(name = "運用（停止だけ）").asJson)).flatMap(json[NotifierDto])
+      _    = assertEquals(u1.config.connectedBy, Some(me.id))
+      // 作った人が連携をやめると、ほかの人は、自分が連携していなければ選び直せない
+      d   <- call(a, Method.DELETE, "/api/integrations/stui/connection")
+      _    = assertEquals(d.status, Status.NoContent)
+      u2  <- call(b, Method.PUT, s"/api/notifiers/${n.id}", Some(notifier(opsId).copy(name = "運用").asJson))
+      _    = assertEquals(u2.status, Status.BadRequest)
+      // ほかの人が連携すれば、選び直してその人の連携で投稿する
+      s2  <- start(b)
+      _   <- back(b, s2)
+      u3  <- call(b, Method.PUT, s"/api/notifiers/${n.id}", Some(notifier(opsId).copy(name = "運用").asJson)).flatMap(json[NotifierDto])
+      meB <- call(b, Method.GET, "/api/me").flatMap(json[MeDto])
+      _    = assertEquals(u3.config.connectedBy, Some(meB.id))
+      _   <- call(b, Method.DELETE, s"/api/notifiers/${n.id}")
     yield ()
   }
 
