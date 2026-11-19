@@ -86,7 +86,7 @@ def chart(s: State) = s.d.mapC { od =>
       <p v-if='mo.status == MonStatus.Down' class="panel downmsg">🔴 {{ mo.lastMessage.getOrElse("") }}</p>
       <section class="panel">
         <h2>拠点ごとの状態</h2>
-        <p class="muted small">判定に数える拠点のうち、{{ confirmText(mo) }}が停止と見たときに停止と判断します。異常の疑いがある拠点・止まっている拠点の結果は数えません（skotare 側の問題として扱います）。</p>
+        <p class="muted small">判定に数える拠点のうち、{{ confirmText(mo) }}が停止と見たときに停止と判断します。異常の疑いがある拠点・止まっている拠点の結果は数えません（{{ AppNames.self }} 側の問題として扱います）。</p>
         <table class="list">
           <thead><tr><th>拠点</th><th>状態</th><th class="num">応答</th><th class="hide-sp">確認</th><th>内容</th><th class="hide-sp">判定</th></tr></thead>
           <tbody><tr v-for="r in mo.regions" :class='if (r.counted) "" else "excluded"'>

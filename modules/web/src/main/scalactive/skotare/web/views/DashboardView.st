@@ -55,7 +55,7 @@ val statuses = List(MonStatus.Up, MonStatus.Down, MonStatus.Paused, MonStatus.Pe
     </div>
     <div v-for="r in badRegions" class="panel warn small">
       ⚠️ 拠点「{{ r.name }}」は{{ RegionHealth.label(r.health) }}です（{{ Fmt.ago(r.since) }}から）: {{ r.reason }}<br>
-      skotare 側（この拠点）の問題として扱い、この拠点の結果は判定に数えていません。監視先の停止とは判断しません。
+      {{ AppNames.self }} 側（この拠点）の問題として扱い、この拠点の結果は判定に数えていません。監視先の停止とは判断しません。
     </div>
     <div class="row">
       <input type="search" v-model="s.q" placeholder="名前・URL・ホストで絞り込む" class="grow">

@@ -11,11 +11,16 @@ import org.scalajs.dom
  */
 object Main {
 
-  def main(args: Array[String]): Unit = {
+  def main(
+    args: Array[String]
+  ): Unit = {
     ScalactiveConfig.titleTemplate = "%s | skotare"
     ScalactiveConfig.defaultTitle = Some("skotare")
+    AppNames.init("skotare")
     Theme.apply()
     // skorimako のブラウザの観測（設定があるときだけ）と、PWA（ホーム画面に追加・オフラインで開く・プッシュ通知）
+    // 共通部品（Pwa・Observe）からの更新の要求にも CSRF 対策のヘッダーを付ける（Api と同じ）
+    sbirds.web.Fetch.extraHeaders = Map("X-Skotare" -> "1")
     Observe.start()
     Pwa.register()
     App()(dom.document.body, AddMethod.appendS(IdSelector("app"))).init()

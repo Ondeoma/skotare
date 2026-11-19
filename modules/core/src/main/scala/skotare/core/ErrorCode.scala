@@ -1,0 +1,68 @@
+package skotare.core
+
+/**
+ * skotare のエラーコード（すべてのエラーをここにまとめる. 形は SKOTARE-<4桁>）.
+ * 1xxx: 認証・共通（10xx 共通, 11xx ログイン, 12xx API トークン）, 2xxx: 監視, 3xxx: 通知先, 4xxx: ステータスページ,
+ * 5xxx: 外部との連携（50xx stui, 51xx プッシュ通知, 52xx OAuth で連携したアプリ）, 6xxx: ユーザー（名前・アイコン）,
+ * 9xxx: サーバー内部・バックグラウンドの処理（確認・判定・通知の行列・掃除）.
+ */
+enum ErrorCode(
+  val code: String,
+  val status: Int,
+  val message: String) extends sbirds.shared.ErrorCode {
+  case ApiTokenReadOnly extends ErrorCode("SKOTARE-1001", 403, "参照のみの API トークンでは変更できません")
+  case ApiTokenNotAllowed extends ErrorCode("SKOTARE-1002", 403, "この操作は API トークンではできません")
+  case CrossSiteRequest extends ErrorCode("SKOTARE-1003", 403, "画面以外からの更新の要求は受け付けません")
+  case ApiTokenInvalid extends ErrorCode("SKOTARE-1004", 401, "API トークンが正しくないか、期限が切れています")
+  case NotLoggedIn extends ErrorCode("SKOTARE-1005", 401, "ログインしてください")
+  case RequestTooLarge extends ErrorCode("SKOTARE-1006", 413, "リクエストの本文が大きすぎます")
+  case RequestBodyInvalid extends ErrorCode("SKOTARE-1007", 400, "リクエストの内容が正しくありません")
+  case InvalidInput extends ErrorCode("SKOTARE-1008", 400, "入力が正しくありません")
+  case TooManyRequests extends ErrorCode("SKOTARE-1009", 429, "短い時間に要求が多すぎます。しばらく待ってからもう一度試してください")
+  case ApiTokenRequired extends ErrorCode("SKOTARE-1010", 401, "API トークン（Authorization: Bearer）が必要です")
+  case OidcNotConfigured extends ErrorCode("SKOTARE-1101", 503, "OIDC が設定されていません")
+  case LoginCodeStateRequired extends ErrorCode("SKOTARE-1102", 400, "code と state が必要です")
+  case LogoutNotFromScreen extends ErrorCode("SKOTARE-1103", 403, "画面から操作してください")
+  case LoginRejectedByIdp extends ErrorCode("SKOTARE-1104", 401, "IdP がログインを断りました。時間をおいてもう一度試すか、管理者に問い合わせてください。")
+  case LoginBrowserMismatch extends ErrorCode("SKOTARE-1105", 400, "ログインを始めたブラウザと違います。もう一度ログインしてください。")
+  case LoginExpired extends ErrorCode("SKOTARE-1106", 400, "ログインの有効期限が切れました。もう一度ログインしてください。")
+  case LoginDenied extends ErrorCode("SKOTARE-1107", 403, "このアカウントではログインできません")
+  case LoginFailed extends ErrorCode("SKOTARE-1108", 401, "IdP からの応答を確かめられませんでした。時間をおいてもう一度試してください。")
+  case UserDisabled extends ErrorCode("SKOTARE-1109", 403, "このユーザーは無効にされています。")
+  case ApiTokenNameInvalid extends ErrorCode("SKOTARE-1201", 400, "名前を100文字以内で入れてください")
+  case ApiTokenScopeInvalid extends ErrorCode("SKOTARE-1202", 400, "スコープは read か write です")
+  case ApiTokenExpiryInvalid extends ErrorCode("SKOTARE-1203", 400, "有効期限は1〜3650日です")
+  case ApiTokenNotFound extends ErrorCode("SKOTARE-1204", 404, "API トークンが見つかりません")
+  case MonitorNotFound extends ErrorCode("SKOTARE-2001", 404, "監視が見つかりません")
+  case MonitorNotFoundOrPaused extends ErrorCode("SKOTARE-2002", 404, "監視が見つからないか、止めています")
+  case NotifierNotFound extends ErrorCode("SKOTARE-3001", 404, "通知先が見つかりません")
+  case NotifierTestSendFailed extends ErrorCode("SKOTARE-3002", 502, "送れませんでした")
+  case NotifierTestTooFrequent extends ErrorCode("SKOTARE-3003", 429, "試しの送信は10秒に1回までです")
+  case PageNotFound extends ErrorCode("SKOTARE-4001", 404, "ページが見つかりません")
+  case PageSlugTaken extends ErrorCode("SKOTARE-4002", 409, "その URL の名前はほかのページで使っています")
+  case StuiRequestFailed extends ErrorCode("SKOTARE-5001", 409, "stui からチャンネルを読めませんでした")
+  case StuiNotConfigured extends ErrorCode("SKOTARE-5002", 404, "stui との連携が設定されていません")
+  case StuiNeedsAppSecret extends ErrorCode("SKOTARE-5003", 503, "stui と連携するには APP_SECRET を設定してください")
+  case StuiStateMissing extends ErrorCode("SKOTARE-5004", 400, "state がありません")
+  case PushServiceNotAllowed extends ErrorCode("SKOTARE-5101", 400, "このプッシュのサービスには送れません")
+  case PushSubscriptionInvalid extends ErrorCode("SKOTARE-5102", 400, "購読の内容が正しくありません")
+  case PushDeviceLimitReached extends ErrorCode("SKOTARE-5103", 400, "プッシュ通知を受け取る端末は20台までです。使わない端末を外してください")
+  case ConnectedAppNotFound extends ErrorCode("SKOTARE-5201", 404, "連携が見つかりません")
+  case NameRequired extends ErrorCode("SKOTARE-6001", 400, "名前を入力してください")
+  case TimezoneInvalid extends ErrorCode("SKOTARE-6002", 400, "タイムゾーンが正しくありません")
+  case NameTooLong extends ErrorCode("SKOTARE-6003", 400, "名前は100文字以内にしてください")
+  case AvatarTooLarge extends ErrorCode("SKOTARE-6004", 413, "画像は1MBまでにしてください")
+  case AvatarTypeUnsupported extends ErrorCode("SKOTARE-6005", 415, "PNG・JPEG・GIF・WebP の画像を選んでください")
+  case AvatarNotFound extends ErrorCode("SKOTARE-6006", 404, "アイコンがありません")
+  case Unexpected extends ErrorCode("SKOTARE-9001", 500, "サーバーでエラーが発生しました")
+  case DatabaseNotReady extends ErrorCode("SKOTARE-9002", 503, "データベースにつながりません（つながるまで待ちます）")
+  case SessionPurgeFailed extends ErrorCode("SKOTARE-9003", 500, "期限の切れたセッションの掃除に失敗しました")
+  case NodeHeartbeatFailed extends ErrorCode("SKOTARE-9004", 500, "ノードの心拍の記録に失敗しました")
+  case DueMonitorClaimFailed extends ErrorCode("SKOTARE-9005", 500, "確かめる監視の取り出しに失敗しました")
+  case RegionJudgeFailed extends ErrorCode("SKOTARE-9006", 500, "拠点の健全性の判定に失敗しました")
+  case NotifyQueueFailed extends ErrorCode("SKOTARE-9007", 500, "通知の行列の処理に失敗しました")
+  case HistoryPurgeFailed extends ErrorCode("SKOTARE-9008", 500, "古い確認の結果の掃除に失敗しました")
+  case MonitorCheckFailed extends ErrorCode("SKOTARE-9009", 500, "監視の確認に失敗しました")
+  case NotificationSendFailed extends ErrorCode("SKOTARE-9010", 502, "通知を送れませんでした（間隔を延ばして送り直します）")
+  case IndexHtmlMissing extends ErrorCode("SKOTARE-9011", 404, "画面のファイルが見つかりません")
+}

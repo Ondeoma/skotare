@@ -40,9 +40,9 @@ def mounted(s: State): Unit = {
   // stui の許可画面から戻ったとき: 結果を知らせ、連携できたらチャンネルを選ぶ画面を開く
   Query.get("integration").filter(_ == "stui").foreach { _ =>
     Query.get("result") match {
-      case Some("connected") => Store.toast("stui と連携しました"); open(s, None, channel = true)
-      case Some("denied")    => Store.toast("stui との連携をやめました")
-      case _                 => Store.toast("stui と連携できませんでした。もう一度試してください")
+      case Some("connected") => Store.toast(s"${AppNames.nameOf("stui")} と連携しました"); open(s, None, channel = true)
+      case Some("denied")    => Store.toast(s"${AppNames.nameOf("stui")} との連携をやめました")
+      case _                 => Store.toast(s"${AppNames.nameOf("stui")} と連携できませんでした。もう一度試してください")
     }
     dom.window.history.replaceState(null, "", dom.window.location.pathname)
   }
@@ -63,7 +63,7 @@ def save(s: State, e: Edit): Unit = {
   if (channelMode(e).v && ch.isEmpty) e.error := "通知するチャンネルを選んでください"
   else {
     val name = Option(e.name.v.trim).filter(_.nonEmpty)
-      .orElse(ch.flatMap(id => s.channels.v.find(_.id == id)).map(c => s"${c.name}（stui）")).getOrElse("")
+      .orElse(ch.flatMap(id => s.channels.v.find(_.id == id)).map(c => s"${c.name}（${AppNames.nameOf("stui")}）")).getOrElse("")
     val cfg = if (ch.isDefined) NotifierConfig(channelId = ch)
               else NotifierConfig(e.baseUrl.v.trim, e.from.v.trim, e.to.v.split(Array('\n', ',')).toList.map(_.trim).filter(_.nonEmpty))
     val r = NotifierReq(name, e.kind.v, cfg, if (ch.isDefined) None else Option(e.secret.v.trim).filter(_.nonEmpty), e.all.v, e.monitors.v, e.enabled.v,
@@ -79,8 +79,8 @@ def save(s: State, e: Edit): Unit = {
 def connect(): Unit = dom.window.location.href = "/api/integrations/stui/connect?returnTo=/notifiers"
 
 def disconnect(s: State): Unit =
-  Dialog.confirm("stui との連携をやめますか？ あなたの連携で投稿している通知先（stui のチャンネル）には、送れなくなります。", "連携をやめる") {
-    Store.report(Api.disconnectStui()) { _ => Store.toast("stui との連携をやめました"); s.channels := Nil; loadStui(s) }
+  Dialog.confirm(s"${AppNames.nameOf("stui")} との連携をやめますか？ あなたの連携で投稿している通知先（${AppNames.nameOf("stui")} のチャンネル）には、送れなくなります。", "連携をやめる") {
+    Store.report(Api.disconnectStui()) { _ => Store.toast(s"${AppNames.nameOf("stui")} との連携をやめました"); s.channels := Nil; loadStui(s) }
   }
 
 def test(n: NotifierDto): Unit = Store.report(Api.testNotifier(n.id))(_ => Store.toast(s"「${n.name}」に試しに送りました"))
@@ -95,10 +95,10 @@ def edits(s: State) = s.edit.mapC(_.toList)
 def isStui(e: Edit) = e.kind.mapC(_ == NotifierKind.Stui)
 def isSkereru(e: Edit) = e.kind.mapC(_ == NotifierKind.Skereru)
 def connected(s: State) = s.stui.mapC(_.exists(_.connected))
-def secretLabel(e: Edit) = e.kind.mapC(k => NotifierKind.secretLabel(k) + (if (e.hasSecret) "（変えるときだけ入れる）" else ""))
+def secretLabel(e: Edit) = e.kind.mapC(k => NotifierKind.secretLabel(k, AppNames.nameOf) + (if (e.hasSecret) "（変えるときだけ入れる）" else ""))
 def secretHint(e: Edit) = e.kind.mapC {
-  case NotifierKind.Stui    => "stui のチャンネルの設定 →「受信 Webhook」で作った URL（https://…/hooks/…）"
-  case NotifierKind.Skereru => "skereru の「設定 → APIキー・MCP」で、send のスコープを付けて発行したキー（skr_…）"
+  case NotifierKind.Stui    => AppNames.nameOf("stui") + " のチャンネルの設定 →「受信 Webhook」で作った URL（https://…/hooks/…）"
+  case NotifierKind.Skereru => s"${AppNames.nameOf("skereru")} の「設定 → APIキー・MCP」で、send のスコープを付けて発行したキー（skr_…）"
   case _                    => "停止・復旧のたびに JSON（event・monitor・message・at・url）を POST します"
 }
 
@@ -122,8 +122,8 @@ def otherOwner(e: Edit) = computed {
 }
 
 def kindLabel(n: NotifierDto): String =
-  if (n.kind == NotifierKind.Stui && n.config.stuiHook) s"stui #${n.config.channelName}（受信 Webhook）"
-  else if (n.kind == NotifierKind.Stui && n.config.stuiChannel) s"stui #${n.config.channelName}" else NotifierKind.label(n.kind)
+  if (n.kind == NotifierKind.Stui && n.config.stuiHook) s"${AppNames.nameOf("stui")} #${n.config.channelName}（受信 Webhook）"
+  else if (n.kind == NotifierKind.Stui && n.config.stuiChannel) s"${AppNames.nameOf("stui")} #${n.config.channelName}" else NotifierKind.label(n.kind, AppNames.nameOf)
 def scope(n: NotifierDto): String = if (n.allMonitors) "すべての監視" else s"${n.monitorIds.size} 件の監視"
 def empty(s: State) = s.list.mapC(_.isEmpty)
 </script>
@@ -134,12 +134,12 @@ def empty(s: State) = s.list.mapC(_.isEmpty)
     <p class="muted small">監視が停止・復旧したときに送ります。送れなかったときは間隔を延ばして送り直します。プッシュ通知は「設定」から端末ごとに受け取れます。</p>
     <p v-if="stuiOn.v" class="row small link-state">
       <template v-if="connected(s).v">
-        <span class="grow">stui と連携しています。通知先に、参加しているチャンネルを選べます。</span>
+        <span class="grow">{{ AppNames.of("stui") }} と連携しています。通知先に、参加しているチャンネルを選べます。</span>
         <button type="button" class="small ghost" @click="disconnect(s)">連携をやめる</button>
       </template>
       <template v-else>
-        <span class="grow muted">stui と連携すると、通知先に stui のチャンネルを一覧から選べます。</span>
-        <button type="button" class="small" @click="connect()">stui と連携する</button>
+        <span class="grow muted">{{ AppNames.of("stui") }} と連携すると、通知先に {{ AppNames.of("stui") }} のチャンネルを一覧から選べます。</span>
+        <button type="button" class="small" @click="connect()">{{ AppNames.of("stui") }} と連携する</button>
       </template>
     </p>
     <p v-if="empty(s)" class="panel muted">まだ通知先がありません。</p>
@@ -157,9 +157,9 @@ def empty(s: State) = s.list.mapC(_.isEmpty)
       <h2>{{ if (e.id.isDefined) "通知先の編集" else "通知先を追加" }}</h2>
       <form @submit.prevent="save(s, e)">
         <label class="field"><span>名前</span><input type="text" v-model="e.name" maxlength="100" placeholder="運用チャンネル"></label>
-        <label class="field"><span>種類</span><select v-model="e.kind"><option v-for="k in NotifierKind.all" :value="k">{{ NotifierKind.label(k) }}</option></select></label>
+        <label class="field"><span>種類</span><select v-model="e.kind"><option v-for="k in NotifierKind.all" :value="k">{{ NotifierKind.label(k, AppNames.nameOf) }}</option></select></label>
         <div v-if="isStui(e).v && stuiOn.v" class="row modes">
-          <label class="row small"><input type="radio" name="mode" value="channel" :checked='e.mode.v == "channel"' @change='e.mode := "channel"'> チャンネルを選ぶ（stui と連携）</label>
+          <label class="row small"><input type="radio" name="mode" value="channel" :checked='e.mode.v == "channel"' @change='e.mode := "channel"'> チャンネルを選ぶ（{{ AppNames.of("stui") }} と連携）</label>
           <label class="row small"><input type="radio" name="mode" value="url" :checked='e.mode.v == "url"' @change='e.mode := "url"'> 受信 Webhook の URL を入れる</label>
         </div>
         <template v-if="channelMode(e).v">
@@ -175,16 +175,16 @@ def empty(s: State) = s.list.mapC(_.isEmpty)
               <label class="row small"><input type="radio" name="via" :checked="e.hook.v" @change="e.hook := true"> 受信 Webhook を作って送る（あなたがチャンネルの管理者なので選べます）</label>
             </div>
             <p v-if="canHook(s, e).v && e.hook.v" class="muted small">
-              {{ if (sameHook(e).v) "前に作った受信 Webhook で送っています。" else "保存すると、このチャンネルに受信 Webhook（skotare）を作り、その URL で送ります。" }}
-              作ったあとは、あなたが連携をやめても届きます（Webhook は stui のチャンネルの設定で確かめられます）。
+              {{ if (sameHook(e).v) "前に作った受信 Webhook で送っています。" else "保存すると、このチャンネルに受信 Webhook（" + AppNames.self.v + "）を作り、その URL で送ります。" }}
+              作ったあとは、あなたが連携をやめても届きます（Webhook は {{ AppNames.of("stui") }} のチャンネルの設定で確かめられます）。
             </p>
-            <p v-else class="muted small">stui のボット「skotare」として、このチャンネルに投稿します。あなたが参加しているチャンネルだけを選べます。</p>
-            <p v-if="otherOwner(e).v" class="muted small">この通知先は、ほかの人の stui との連携で投稿しています。チャンネルを変えると、あなたの連携で投稿するようになります。</p>
+            <p v-else class="muted small">{{ AppNames.of("stui") }} のボット「{{ AppNames.self }}」として、このチャンネルに投稿します。あなたが参加しているチャンネルだけを選べます。</p>
+            <p v-if="otherOwner(e).v" class="muted small">この通知先は、ほかの人の {{ AppNames.of("stui") }} との連携で投稿しています。チャンネルを変えると、あなたの連携で投稿するようになります。</p>
           </template>
           <template v-else>
-            <p class="small">チャンネルを選ぶには、stui と連携してください。</p>
-            <p><button type="button" @click="connect()">stui と連携する</button></p>
-            <p v-if="e.current.channelId.isDefined" class="muted small">今は stui #{{ e.current.channelName }} に投稿しています。監視の選択などだけなら、連携しなくても変えられます。</p>
+            <p class="small">チャンネルを選ぶには、{{ AppNames.of("stui") }} と連携してください。</p>
+            <p><button type="button" @click="connect()">{{ AppNames.of("stui") }} と連携する</button></p>
+            <p v-if="e.current.channelId.isDefined" class="muted small">今は {{ AppNames.of("stui") }} #{{ e.current.channelName }} に投稿しています。監視の選択などだけなら、連携しなくても変えられます。</p>
           </template>
           <p v-if="s.channelError.mapC(_.nonEmpty)" class="error">{{ s.channelError }}</p>
         </template>
@@ -193,7 +193,7 @@ def empty(s: State) = s.list.mapC(_.isEmpty)
           <p class="muted small">{{ secretHint(e) }}</p>
         </template>
         <template v-if="isSkereru(e)">
-          <label class="field"><span>skereru の URL</span><input type="url" v-model="e.baseUrl" placeholder="https://mail.example.com"></label>
+          <label class="field"><span>{{ AppNames.of("skereru") }} の URL</span><input type="url" v-model="e.baseUrl" placeholder="https://mail.example.com"></label>
           <label class="field"><span>差出人（APIキーの持ち主が送れるアドレス）</span><input type="email" v-model="e.from"></label>
           <label class="field"><span>宛先（1行に1つ）</span><textarea v-model="e.to" rows="3"></textarea></label>
         </template>

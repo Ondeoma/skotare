@@ -3,7 +3,6 @@ import skotare.web.*
 import skotare.web.parts.*
 import skotare.shared.*
 
-import org.scalajs.dom
 import java.util.UUID
 import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
 import scala.util.{Failure, Success}
@@ -35,7 +34,7 @@ def remove(s: State, p: StatusPageDto): Unit = Dialog.confirm(s"ステータス�
   Store.report(Api.deletePage(p.id)) { _ => Store.toast("削除しました"); load(s) }
 }
 
-def url(p: StatusPageDto): String = s"${dom.window.location.origin}/s/${p.slug}"
+def url(p: StatusPageDto): String = s"${window.location.origin}/s/${p.slug}"
 def toggle(e: Edit, id: UUID): Unit =
   e.items := (if (e.items.v.exists(_.monitorId == id)) e.items.v.filterNot(_.monitorId == id) else e.items.v :+ PageItem(id, None))
 def on(e: Edit, id: UUID) = e.items.mapC(_.exists(_.monitorId == id))

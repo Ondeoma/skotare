@@ -46,10 +46,8 @@ Scala 3（http4s・doobie・PostgreSQL）、画面は Scala.js + [Scalactive](ht
 | `modules/shared` | バックエンドと画面（Scala.js）で共有する API の型と入力の確かめ（circe） |
 | `modules/core` | 監視の確かめ方（HTTP(S)・TCP・DNS・PING. JDK の機能だけで行う） |
 | `modules/db` | PostgreSQL（doobie・Flyway）. 監視・結果・障害・通知の行列・ステータスページ・ノード |
-| `modules/auth` | OIDC（Authorization Code + PKCE）、API トークン、秘密の値の暗号化 |
-| `modules/devidp` | 開発・テスト用の簡易 OIDC プロバイダ |
-| `modules/observe` | 観測（otel4s-oteljava） |
-| `modules/push` | プッシュ通知（Web Push・VAPID） |
+| `modules/auth` | API トークンの接頭辞・秘密の値の暗号化の salt（OIDC などの中身は sbirds-lib の auth） |
+| `modules/devidp` | 開発・テスト用の簡易 OIDC プロバイダ（中身は sbirds-lib の devidp） |
 | `modules/api` | REST API・MCP・監視を回す裏の処理（Worker）・通知の送信 |
 | `modules/app` | 起動（設定・HTTP サーバー・画面の配信） |
 | `modules/web` | 画面（Scala.js + Scalactive） |

@@ -37,7 +37,7 @@ def past(p: PublicStatusDto): List[PublicIncident] = p.incidents.filter(_.resolv
     <p v-if="s.error.mapC(_.nonEmpty)" class="panel">{{ s.error }}</p>
     <template v-for="p in pages(s)">
       <header class="sp-head">
-        <img src="/logo.svg" alt="" width="36" height="36">
+        <img :src='AppNames.logo("/logo.svg").v' alt="" height="36">
         <div class="grow"><h1>{{ p.title }}</h1><p v-if="p.description.nonEmpty" class="muted">{{ p.description }}</p></div>
       </header>
       <div :class="bannerClass(p)">{{ Overall.label(p.overall) }}</div>
@@ -61,7 +61,7 @@ def past(p: PublicStatusDto): List[PublicIncident] = p.incidents.filter(_.resolv
         <p v-if="past(p).isEmpty" class="muted">障害はありませんでした。</p>
         <p v-for="i in past(p)" class="small">✅ <b>{{ i.name }}</b> — {{ Fmt.dateTime(i.startedAt) }}（{{ Fmt.span(i.startedAt, i.resolvedAt) }}停止）</p>
       </section>
-      <p class="muted small foot">最終更新 {{ Fmt.dateTime(p.updatedAt) }} · skotare</p>
+      <p class="muted small foot">最終更新 {{ Fmt.dateTime(p.updatedAt) }} · {{ AppNames.self }}</p>
     </template>
   </div>
 </template>

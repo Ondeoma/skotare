@@ -152,7 +152,7 @@ val confirms: List[(String, String)] = ConfirmRegions.choices.map((n, l) => n.to
         <label class="field"><span>停止と判断するまでの再試行</span><input type="number" v-model="s.retries" min="0" max="10"></label>
         <label class="field"><span>停止と判断する拠点の数</span><select v-model="s.confirm"><option v-for="c in confirms" :value="c._1">{{ c._2 }}</option></select></label>
       </div>
-      <label class="row"><input type="checkbox" v-model="s.canary"> 基準点にする（拠点そのものが外へ届くかの判定に使う. 過半数の基準点に届かない拠点は、skotare 側の異常の疑いとして判定から外す）</label>
+      <label class="row"><input type="checkbox" v-model="s.canary"> 基準点にする（拠点そのものが外へ届くかの判定に使う. 過半数の基準点に届かない拠点は、{{ AppNames.self }} 側の異常の疑いとして判定から外す）</label>
       <label class="field"><span>説明（任意）</span><input type="text" v-model="s.description" maxlength="1000"></label>
       <label class="row"><input type="checkbox" v-model="s.enabled"> 確かめる（外すと一時停止）</label>
 
