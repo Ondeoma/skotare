@@ -10,12 +10,11 @@ import sbirds.observe.{Log, Metrics, Telemetry}
 import scala.concurrent.duration.*
 
 /** node はこのノードの名前（確認の結果に残す）、region は拠点の名前、concurrency は同時に確かめる数. */
-final case class WorkerConfig(
-  node: String,
-  publicUrl: String,
-  version: String,
-  concurrency: Int = 16,
-  region: String = "default")
+final case class WorkerConfig(node: String,
+                              publicUrl: String,
+                              version: String,
+                              concurrency: Int = 16,
+                              region: String = "default")
 
 /**
  * 監視を回す（どのノードでも同じものを動かす. 同じ拠点のノードは DB で取り合うので、台数を増やすと分担する. 拠点ごとに全ての監視を確かめる）.
@@ -25,21 +24,16 @@ final case class WorkerConfig(
  *  - 心拍: 30秒ごとにノードの生存を書く
  *  - 掃除: 1時間ごとに古い結果を消す
  */
-final class Worker(
-  monitors: MonitorStore,
-  notifiers: NotifierStore,
-  nodes: NodeStore,
-  senders: Senders,
-  announcer: Announcer,
-  cfg: WorkerConfig) {
+final class Worker(monitors: MonitorStore,
+                   notifiers: NotifierStore,
+                   nodes: NodeStore,
+                   senders: Senders,
+                   announcer: Announcer,
+                   cfg: WorkerConfig) {
 
   /** d ごとに繰り返す. 失敗しても止めず、code を付けてログに出す. */
-  private def every(
-    d: FiniteDuration,
-    code: ErrorCode
-  )(
-    io: IO[Unit]
-  ): IO[Nothing] = (io.handleErrorWith(e => Log.report(code, e.toString, e)) *> IO.sleep(d)).foreverM
+  private def every(d: FiniteDuration, code: ErrorCode)(io: IO[Unit]): IO[Nothing] =
+    (io.handleErrorWith(e => Log.report(code, e.toString, e)) *> IO.sleep(d)).foreverM
 
   def run: IO[Unit] =
     for {
@@ -60,9 +54,7 @@ final class Worker(
       ).parTupled
     } yield ()
 
-  private def checkTick(
-    sem: Semaphore[IO]
-  ): IO[Unit] =
+  private def checkTick(sem: Semaphore[IO]): IO[Unit] =
     sem.available.flatMap { free =>
       if free <= 0 then IO.unit
       else
@@ -71,9 +63,7 @@ final class Worker(
         ))
     }
 
-  def check(
-    m: DueMonitor
-  ): IO[Unit] =
+  def check(m: DueMonitor): IO[Unit] =
     Telemetry.span("monitor.check", "monitor.kind" -> m.kind, "monitor.name" -> m.name, "region" -> m.region) {
       for {
         r <- Probe.run(m.kind, m.config, m.timeoutMs.millis)
@@ -95,10 +85,7 @@ final class Worker(
   /** 拠点の健全性を判定し直す（15秒ごと. テストからも呼ぶ）. */
   def judgeTick: IO[Unit] =
     IO.realTimeInstant.flatMap(at => monitors.judgeRegions(at, cfg.publicUrl)).flatMap {
-      (
-        rs,
-        ts
-      ) =>
+      (rs, ts) =>
         rs.traverse_(announcer.region) *> ts.traverse_(announcer.transition)
     }
 

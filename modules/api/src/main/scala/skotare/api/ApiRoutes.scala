@@ -11,23 +11,16 @@ import skotare.db.*
 
 /** アプリのルートをまとめる（REST API・OAuth の認可・MCP・プッシュ通知の購読）. MCP は REST API をトークンで内部から呼ぶ. */
 object ApiRoutes {
-  def apply(
-    oidc: Option[sbirds.auth.OidcClient],
-    users: UserStore,
-    sess: SessionAuth,
-    cfg: ApiConfig,
-    monitorRoutes: MonitorRoutes,
-    push: Option[(sbirds.push.PushStore, sbirds.push.PushService)] = None,
-    extra: HttpRoutes[IO] = HttpRoutes.empty[IO]
-  ): HttpRoutes[IO] = {
+  def apply(oidc: Option[sbirds.auth.OidcClient],
+            users: UserStore,
+            sess: SessionAuth,
+            cfg: ApiConfig,
+            monitorRoutes: MonitorRoutes,
+            push: Option[(sbirds.push.PushStore, sbirds.push.PushService)] = None,
+            extra: HttpRoutes[IO] = HttpRoutes.empty[IO]): HttpRoutes[IO] = {
     val rest = new AuthRoutes(oidc, users, sess, cfg).routes <+> new OAuthRoutes(users, sess, cfg).routes <+>
       monitorRoutes.routes <+> extra <+>
-      push.fold(HttpRoutes.empty[IO])(
-        (
-          store,
-          service
-        ) => new PushRoutes(store, service, sess).routes
-      )
+      push.fold(HttpRoutes.empty[IO])((store, service) => new PushRoutes(store, service, sess).routes)
     // 本文は MaxBody まで（大きな本文でメモリを使い切らせない. アイコンの 1MB より大きくしておく）.
     // Content-Length が超えていれば、EntityLimiter はルートに入る前に例外にするので、ここで 413 にする
     val limited =

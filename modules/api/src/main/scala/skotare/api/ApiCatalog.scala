@@ -2,10 +2,7 @@ package skotare.api
 
 /** REST API の一覧（MCP の list_api_endpoints と GET /api/endpoints）. */
 object ApiCatalog {
-  final case class Endpoint(
-    method: String,
-    path: String,
-    description: String)
+  final case class Endpoint(method: String, path: String, description: String)
   private val monitorBody =
     "{name, kind: http|tcp|dns|ping, config: {url, method, headers: [{name, value}], body, expectStatus（例 200-299,301）, " +
       "bodyContains, bodyNotContains, bodyRegex, followRedirects, certExpiryDays, host, port, recordType: A|AAAA|CNAME|MX|TXT|NS, dnsServer, expect}, " +

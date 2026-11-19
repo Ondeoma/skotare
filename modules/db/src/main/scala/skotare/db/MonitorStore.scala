@@ -15,24 +15,11 @@ import java.time.{Instant, LocalDate, ZoneOffset}
 import java.util.UUID
 
 /** 確かめる時刻が来た監視（ノードが自分の拠点の分として取ったもの）. */
-final case class DueMonitor(
-  id: UUID,
-  name: String,
-  kind: String,
-  config: MonitorConfig,
-  timeoutMs: Int,
-  region: String)
+final case class DueMonitor(id: UUID, name: String, kind: String, config: MonitorConfig, timeoutMs: Int, region: String)
 
 /** 拠点の健全性が変わったこと（通知・ログに使う）. */
-final case class RegionChange(
-  region: String,
-  from: String,
-  to: String,
-  reason: String,
-  at: Instant) {
-  def payload(
-    publicUrl: String
-  ): Json = Json.obj(
+final case class RegionChange(region: String, from: String, to: String, reason: String, at: Instant) {
+  def payload(publicUrl: String): Json = Json.obj(
     "event" -> s"region.$to".asJson,
     "region" -> Json.obj("name" -> region.asJson, "health" -> to.asJson, "from" -> from.asJson),
     "message" -> reason.asJson,
@@ -45,16 +32,15 @@ final case class RegionChange(
  * 状態が変わったこと（通知・プッシュ・メトリクスに使う）. event は、停止 down・復旧 up・
  * 停止中に設定を変えて障害を閉じた closed（to は未確認 pending か一時停止 paused）.
  */
-final case class Transition(
-  monitorId: UUID,
-  name: String,
-  kind: String,
-  target: String,
-  from: String,
-  to: String,
-  message: String,
-  at: Instant,
-  downSince: Option[Instant]) {
+final case class Transition(monitorId: UUID,
+                            name: String,
+                            kind: String,
+                            target: String,
+                            from: String,
+                            to: String,
+                            message: String,
+                            at: Instant,
+                            downSince: Option[Instant]) {
   def down: Boolean = to == MonStatus.Down
   def event: String = to match {
     case MonStatus.Down => "down"
@@ -63,9 +49,7 @@ final case class Transition(
   }
 
   /** 通知の本文（stui・skereru・Webhook で共通）. */
-  def payload(
-    publicUrl: String
-  ): Json = Json.obj(
+  def payload(publicUrl: String): Json = Json.obj(
     "event" -> event.asJson,
     "status" -> to.asJson,
     "monitor" ->
@@ -77,29 +61,26 @@ final case class Transition(
   )
 }
 
-private final case class MonitorRow(
-  id: UUID,
-  name: String,
-  kind: String,
-  config: Json,
-  intervalSec: Int,
-  timeoutMs: Int,
-  retries: Int,
-  enabled: Boolean,
-  description: String,
-  status: String,
-  statusSince: Instant,
-  lastCheckedAt: Option[Instant],
-  lastLatencyMs: Option[Int],
-  lastMessage: Option[String],
-  uptime24h: Option[Double],
-  uptime30d: Option[Double],
-  recent: String,
-  canary: Boolean,
-  confirmRegions: Int) {
-  def dto(
-    regions: List[RegionStateDto]
-  ): MonitorDto = {
+private final case class MonitorRow(id: UUID,
+                                    name: String,
+                                    kind: String,
+                                    config: Json,
+                                    intervalSec: Int,
+                                    timeoutMs: Int,
+                                    retries: Int,
+                                    enabled: Boolean,
+                                    description: String,
+                                    status: String,
+                                    statusSince: Instant,
+                                    lastCheckedAt: Option[Instant],
+                                    lastLatencyMs: Option[Int],
+                                    lastMessage: Option[String],
+                                    uptime24h: Option[Double],
+                                    uptime30d: Option[Double],
+                                    recent: String,
+                                    canary: Boolean,
+                                    confirmRegions: Int) {
+  def dto(regions: List[RegionStateDto]): MonitorDto = {
     val cfg = config.as[MonitorConfig].getOrElse(MonitorConfig())
     MonitorDto(
       id,
@@ -131,8 +112,7 @@ private final case class MonitorRow(
  * 監視・確認の結果・障害.
  * 監視は拠点ごとに確かめ（monitor_region）、健全な拠点の票を合わせて監視の状態（monitor.status）を決める（[[skotare.core.Judge]]）.
  */
-final class MonitorStore(
-  xa: Transactor[IO]) extends TxStore(xa) {
+final class MonitorStore(xa: Transactor[IO]) extends TxStore(xa) {
 
   /** 確認の結果を残す日数（日ごとの集計 check_daily は DailyKeepDays 日）. */
   val KeepDays = 30
@@ -159,31 +139,18 @@ final class MonitorStore(
       fr", m.canary, m.confirm_regions"
 
   /** 拠点ごとの状態（ids を付けるとその監視だけ）. */
-  private def regionStatesC(
-    ids: Option[List[UUID]]
-  ): ConnectionIO[Map[UUID, List[RegionStateDto]]] =
+  private def regionStatesC(ids: Option[List[UUID]]): ConnectionIO[Map[UUID, List[RegionStateDto]]] =
     (fr"""select mr.monitor_id, mr.region, mr.status, mr.status_since, mr.last_checked_at, mr.last_latency_ms, mr.last_message, r.health = 'ok'
           from monitor_region mr join region r on r.name = mr.region""" ++
       Fragments.whereAndOpt(ids.map(xs => fr"mr.monitor_id = any(${xs.toArray})")) ++
       fr"order by mr.region")
       .query[(UUID, String, String, Instant, Option[Instant], Option[Int], Option[String], Boolean)].to[List]
-      .map(_.groupMap(_._1)(
-        (
-          _,
-          r,
-          st,
-          since,
-          at,
-          l,
-          msg,
-          c
-        ) => RegionStateDto(r, st, since.toString, at.map(_.toString), l, msg, c)
+      .map(_.groupMap(_._1)((_, r, st, since, at, l, msg, c) =>
+        RegionStateDto(r, st, since.toString, at.map(_.toString), l, msg, c)
       ))
 
   /** 監視の一覧（ids を付けるとその監視だけ）. */
-  private def listC(
-    ids: Option[List[UUID]]
-  ): ConnectionIO[List[MonitorDto]] =
+  private def listC(ids: Option[List[UUID]]): ConnectionIO[List[MonitorDto]] =
     for {
       rows <-
       (fr"select" ++ cols ++ fr"from monitor m" ++
@@ -195,37 +162,20 @@ final class MonitorStore(
   def list: IO[List[MonitorDto]] = tx(listC(None))
 
   /** 指定した監視だけ（ステータスページ）. */
-  def listOf(
-    ids: List[UUID]
-  ): IO[List[MonitorDto]] = if ids.isEmpty then IO.pure(Nil) else tx(listC(Some(ids)))
+  def listOf(ids: List[UUID]): IO[List[MonitorDto]] = if ids.isEmpty then IO.pure(Nil) else tx(listC(Some(ids)))
 
   /** 名前と状態だけ（ステータスページ. 稼働率などの重い集計をしない）. */
-  def statuses(
-    ids: List[UUID]
-  ): IO[Map[UUID, (String, String)]] =
+  def statuses(ids: List[UUID]): IO[Map[UUID, (String, String)]] =
     if ids.isEmpty then IO.pure(Map.empty)
     else
       tx(sql"select id, name, status from monitor where id = any(${ids.toArray})".query[(UUID, String, String)].to[List]
-        .map(_.map(
-          (
-            id,
-            n,
-            s
-          ) => id -> (n, s)
-        ).toMap))
+        .map(_.map((id, n, s) => id -> (n, s)).toMap))
 
-  def find(
-    id: UUID
-  ): IO[Option[MonitorDto]] = tx(findC(id))
+  def find(id: UUID): IO[Option[MonitorDto]] = tx(findC(id))
 
-  private def findC(
-    id: UUID
-  ): ConnectionIO[Option[MonitorDto]] = listC(Some(List(id))).map(_.headOption)
+  private def findC(id: UUID): ConnectionIO[Option[MonitorDto]] = listC(Some(List(id))).map(_.headOption)
 
-  def create(
-    r: MonitorReq,
-    by: UUID
-  ): IO[MonitorDto] = tx {
+  def create(r: MonitorReq, by: UUID): IO[MonitorDto] = tx {
     val id = UUID.randomUUID()
     val st = if r.enabled then MonStatus.Pending else MonStatus.Paused
     sql"""insert into monitor (id, name, kind, config, interval_sec, timeout_ms, retries, enabled, description, status, created_by, canary, confirm_regions)
@@ -241,11 +191,7 @@ final class MonitorStore(
    * 停止中に変えたら障害を閉じ、「設定の変更で終えた」ことを知らせる（停止の通知だけが残らないように）.
    * 間隔を短くしたら、次の確認を新しい間隔までに早める.
    */
-  def update(
-    id: UUID,
-    r: MonitorReq,
-    publicUrl: String
-  ): IO[Option[(MonitorDto, Option[Transition])]] = tx {
+  def update(id: UUID, r: MonitorReq, publicUrl: String): IO[Option[(MonitorDto, Option[Transition])]] = tx {
     sql"select name, kind, config, enabled, status, interval_sec from monitor where id = $id for no key update"
       .query[(String, String, Json, Boolean, String, Int)].option.flatMap {
         case None => none[(MonitorDto, Option[Transition])].pure[ConnectionIO]
@@ -277,27 +223,17 @@ final class MonitorStore(
           (fr"""update monitor set name = ${r.name}, kind = ${r.kind}, config = ${r.config.asJson}, interval_sec = ${r.intervalSec},
                 timeout_ms = ${r.timeoutMs}, retries = ${r.retries}, enabled = ${r.enabled}, description = ${r.description},
                 canary = ${r.canary}, confirm_regions = ${r.confirmRegions}, updated_at = now()""" ++
-            reset ++ fr"where id = $id").update.run *> regions *> (close, findC(id)).mapN(
-            (
-              t,
-              m
-            ) => m.map(_ -> t)
-          )
+            reset ++ fr"where id = $id").update.run *> regions *> (close, findC(id)).mapN((t, m) => m.map(_ -> t))
       }
   }
 
-  def delete(
-    id: UUID
-  ): IO[Boolean] = tx(sql"delete from monitor where id = $id".update.run.map(_ > 0))
+  def delete(id: UUID): IO[Boolean] = tx(sql"delete from monitor where id = $id".update.run.map(_ > 0))
 
   /** 次の確認をすぐにする（今すぐ確かめる）. */
-  def checkSoon(
-    id: UUID
-  ): IO[Boolean] = tx(
-    sql"update monitor_region set next_check_at = now() where monitor_id = $id and exists (select 1 from monitor where id = $id and enabled)".update.run.map(
+  def checkSoon(id: UUID): IO[Boolean] =
+    tx(sql"update monitor_region set next_check_at = now() where monitor_id = $id and exists (select 1 from monitor where id = $id and enabled)".update.run.map(
       _ > 0
-    )
-  )
+    ))
 
   // ---------------------------------------------------------------- 確認（拠点ごと. 同じ拠点のノードで取り合う）
 
@@ -305,10 +241,7 @@ final class MonitorStore(
    * この拠点で確かめる時刻が来たものを n 件取り、次の時刻を進める. 「for update skip locked」なので、同じ拠点のほかのノードが取ったものは飛ばす
    * （同じ監視を同じ拠点の2台で同時に確かめない. ノードが止まっても、次の時刻には同じ拠点のほかのノードが取る）.
    */
-  def claimDue(
-    region: String,
-    n: Int
-  ): IO[List[DueMonitor]] = tx(
+  def claimDue(region: String, n: Int): IO[List[DueMonitor]] = tx(
     sql"""update monitor_region mr set next_check_at = now() + make_interval(secs => m.interval_sec)
           from monitor m
           where m.id = mr.monitor_id and mr.region = $region and mr.monitor_id in (
@@ -317,54 +250,42 @@ final class MonitorStore(
             order by x.next_check_at limit $n for update of x skip locked)
           returning m.id, m.name, m.kind, m.config, m.timeout_ms"""
       .query[(UUID, String, String, Json, Int)].to[List]
-      .map(_.map(
-        (
-          id,
-          name,
-          k,
-          c,
-          t
-        ) => DueMonitor(id, name, k, c.as[MonitorConfig].getOrElse(MonitorConfig()), t, region)
+      .map(_.map((id, name, k, c, t) =>
+        DueMonitor(id, name, k, c.as[MonitorConfig].getOrElse(MonitorConfig()), t, region)
       ))
   )
 
   /** 判定に使う監視の行. */
-  private final case class MonRow(
-    name: String,
-    kind: String,
-    config: Json,
-    status: String,
-    enabled: Boolean,
-    confirm: Int,
-    retries: Int)
+  private final case class MonRow(name: String,
+                                  kind: String,
+                                  config: Json,
+                                  status: String,
+                                  enabled: Boolean,
+                                  confirm: Int,
+                                  retries: Int)
 
   /**
    * ある拠点から見た状態. ok はその拠点が健全か、stale は確かめる時刻を大きく過ぎているか
    * （心拍はあるのに確認が回っていない拠点の古い票で、判定を止めたり誤らせたりしないため、票に数えない）.
    */
-  private final case class RegionRow(
-    region: String,
-    status: String,
-    streak: Int,
-    message: String,
-    ok: Boolean,
-    stale: Boolean) {
+  private final case class RegionRow(region: String,
+                                     status: String,
+                                     streak: Int,
+                                     message: String,
+                                     ok: Boolean,
+                                     stale: Boolean) {
     def votes: Boolean = ok && !stale
   }
 
   private val stale: Fragment = Sql.stale
 
   /** 監視の行をロックして読む（for no key update: 結果・障害の挿入（外部キー）は止めない. 拠点どうしの結果は1つずつ順に合わせる）. */
-  private def lockMonitorC(
-    id: UUID
-  ): ConnectionIO[Option[MonRow]] =
+  private def lockMonitorC(id: UUID): ConnectionIO[Option[MonRow]] =
     sql"select name, kind, config, status, enabled, confirm_regions, retries from monitor where id = $id for no key update".query[
       MonRow
     ].option
 
-  private def regionRowsC(
-    id: UUID
-  ): ConnectionIO[List[RegionRow]] =
+  private def regionRowsC(id: UUID): ConnectionIO[List[RegionRow]] =
     (fr"select mr.region, mr.status, mr.fail_streak, coalesce(mr.last_message, ''), r.health = 'ok'," ++ stale ++
       fr"from monitor_region mr join region r on r.name = mr.region join monitor m on m.id = mr.monitor_id where mr.monitor_id = $id order by mr.region")
       .query[RegionRow].to[List]
@@ -373,14 +294,12 @@ final class MonitorStore(
    * 拠点の結果を残し、その拠点から見た状態を進める（失敗が retries 回を超えて続いたら停止、成功したら正常.
    * 停止と判断する前の失敗では、次の確認を早める（20秒後））. そのうえで、健全な拠点の票で監視の状態を決め直す.
    */
-  def record(
-    id: UUID,
-    region: String,
-    r: ProbeResult,
-    node: String,
-    at: Instant,
-    publicUrl: String
-  ): IO[Option[Transition]] = tx {
+  def record(id: UUID,
+             region: String,
+             r: ProbeResult,
+             node: String,
+             at: Instant,
+             publicUrl: String): IO[Option[Transition]] = tx {
     lockMonitorC(id).flatMap {
       case Some(m) if m.enabled =>
         regionRowsC(id).flatMap { rows =>
@@ -421,23 +340,20 @@ final class MonitorStore(
     }
   }
 
-  private def verdictOf(
-    s: String
-  ): Option[Boolean] = Option.when(s == MonStatus.Up || s == MonStatus.Down)(s == MonStatus.Up)
+  private def verdictOf(s: String): Option[Boolean] =
+    Option.when(s == MonStatus.Up || s == MonStatus.Down)(s == MonStatus.Up)
 
   /**
    * 健全な拠点の、古くない票で監視の状態を決め、変わったら障害を開く・閉じ、通知の行列に入れる. 呼ぶ側で monitor の行をロックしておく.
    * 票で決まらなければ、状態は変えない（保留）. 停止の間は、原因（停止と見ている拠点とその理由）を最後の結果として出し続ける.
    * last は一覧に出す最後の結果（応答時間, 説明）. 返すのは (状態の変化, 稼働率に数える判定（正常 true・停止 false. 未確認は None）).
    */
-  private def decideC(
-    id: UUID,
-    m: MonRow,
-    rs: List[RegionRow],
-    at: Instant,
-    publicUrl: String,
-    last: Option[(Option[Int], String)]
-  ): ConnectionIO[(Option[Transition], Option[Boolean])] = {
+  private def decideC(id: UUID,
+                      m: MonRow,
+                      rs: List[RegionRow],
+                      at: Instant,
+                      publicUrl: String,
+                      last: Option[(Option[Int], String)]): ConnectionIO[(Option[Transition], Option[Boolean])] = {
     val votes = rs.filter(_.votes)
     val next = Judge.overall(votes.map(_.status), m.confirm).getOrElse(m.status)
     val downs = votes.filter(_.status == MonStatus.Down)
@@ -494,10 +410,7 @@ final class MonitorStore(
    * 健全性が変わったら、拠点の変化を通知の行列に入れ、状態が変わりうる監視だけをロックして判定し直す
    * （疑わしくなった拠点の票を外す・健全に戻った拠点の票を戻す）. 止まった拠点の状態は未確認に戻す（戻ったときに古い票で判定しない）.
    */
-  def judgeRegions(
-    at: Instant,
-    publicUrl: String
-  ): IO[(List[RegionChange], List[Transition])] = tx {
+  def judgeRegions(at: Instant, publicUrl: String): IO[(List[RegionChange], List[Transition])] = tx {
     sql"select pg_try_advisory_xact_lock($JudgeLock)".query[Boolean].unique.flatMap {
       case false => (List.empty[RegionChange], List.empty[Transition]).pure[ConnectionIO]
       case true =>
@@ -546,25 +459,17 @@ final class MonitorStore(
   }
 
   /** 続いている障害を閉じ、始まった時刻を返す. */
-  private def closeIncidentC(
-    id: UUID,
-    at: Instant
-  ): ConnectionIO[Option[Instant]] =
+  private def closeIncidentC(id: UUID, at: Instant): ConnectionIO[Option[Instant]] =
     sql"update incident set resolved_at = $at where monitor_id = $id and resolved_at is null returning started_at".query[
       Instant
     ].option
 
   /** 状態の変化を、この監視を送る通知先ごとに行列へ入れる. */
-  private def enqueue(
-    t: Transition,
-    publicUrl: String
-  ): ConnectionIO[Unit] = enqueuePayload(t.payload(publicUrl), Some(t.monitorId))
+  private def enqueue(t: Transition, publicUrl: String): ConnectionIO[Unit] =
+    enqueuePayload(t.payload(publicUrl), Some(t.monitorId))
 
   /** monitor が None（拠点の変化）なら、すべての監視を送る通知先にだけ入れる. */
-  private def enqueuePayload(
-    payload: Json,
-    monitor: Option[UUID]
-  ): ConnectionIO[Unit] =
+  private def enqueuePayload(payload: Json, monitor: Option[UUID]): ConnectionIO[Unit] =
     (fr"insert into notification_outbox (id, notifier_id, payload) select gen_random_uuid(), n.id, $payload from notifier n where n.enabled and (n.all_monitors" ++
       monitor.fold(fr"")(id =>
         fr"or exists (select 1 from notifier_monitor x where x.notifier_id = n.id and x.monitor_id = $id)"
@@ -572,47 +477,25 @@ final class MonitorStore(
 
   // ---------------------------------------------------------------- 見る
 
-  def checks(
-    id: UUID,
-    limit: Int
-  ): IO[List[CheckDto]] = tx(
-    sql"select checked_at, ok, latency_ms, message, node, region from check_result where monitor_id = $id order by checked_at desc limit $limit"
-      .query[(Instant, Boolean, Option[Int], String, String, String)].to[List].map(_.map(
-        (
-          a,
-          o,
-          l,
-          m,
-          n,
-          r
-        ) => CheckDto(a.toString, o, l, m, n, r)
-      ))
-  )
+  def checks(id: UUID, limit: Int): IO[List[CheckDto]] =
+    tx(sql"select checked_at, ok, latency_ms, message, node, region from check_result where monitor_id = $id order by checked_at desc limit $limit".query[
+      (Instant, Boolean, Option[Int], String, String, String)
+    ].to[List].map(_.map((a, o, l, m, n, r) => CheckDto(a.toString, o, l, m, n, r))))
 
   private val incidentCols =
     fr"i.id, i.monitor_id, m.name, i.started_at, i.resolved_at, i.cause from incident i join monitor m on m.id = i.monitor_id"
-  private def incidentDto(
-    t: (UUID, UUID, String, Instant, Option[Instant], String)
-  ) =
+  private def incidentDto(t: (UUID, UUID, String, Instant, Option[Instant], String)) =
     IncidentDto(t._1, t._2, t._3, t._4.toString, t._5.map(_.toString), t._6)
 
   /** 障害の一覧（新しい順）. monitor を付けるとその監視だけ、openOnly で続いているものだけ. */
-  def incidents(
-    monitor: Option[UUID],
-    openOnly: Boolean,
-    limit: Int
-  ): IO[List[IncidentDto]] =
+  def incidents(monitor: Option[UUID], openOnly: Boolean, limit: Int): IO[List[IncidentDto]] =
     incidentsWhere(
       List(monitor.map(id => fr"i.monitor_id = $id"), Option.when(openOnly)(fr"i.resolved_at is null")).flatten,
       limit
     )
 
   /** 指定した監視の、since より後に終わったか続いている障害（ステータスページ）. */
-  def incidentsOf(
-    ids: List[UUID],
-    since: Instant,
-    limit: Int
-  ): IO[List[IncidentDto]] =
+  def incidentsOf(ids: List[UUID], since: Instant, limit: Int): IO[List[IncidentDto]] =
     if ids.isEmpty then IO.pure(Nil)
     else
       incidentsWhere(
@@ -620,22 +503,19 @@ final class MonitorStore(
         limit
       )
 
-  private def incidentsWhere(
-    conds: List[Fragment],
-    limit: Int
-  ): IO[List[IncidentDto]] = tx(
-    (fr"select" ++ incidentCols ++ (if conds.isEmpty then fr"" else fr"where" ++ conds.reduce(_ ++ fr"and" ++ _)) ++
-      fr"order by i.started_at desc limit $limit").query[
-      (UUID, UUID, String, Instant, Option[Instant], String)
-    ].to[List].map(_.map(incidentDto))
-  )
+  private def incidentsWhere(conds: List[Fragment], limit: Int): IO[List[IncidentDto]] = tx((fr"select" ++
+    incidentCols ++ (if conds.isEmpty then fr"" else fr"where" ++ conds.reduce(_ ++ fr"and" ++ _)) ++
+    fr"order by i.started_at desc limit $limit").query[(
+    UUID,
+    UUID,
+    String,
+    Instant,
+    Option[Instant],
+    String
+  )].to[List].map(_.map(incidentDto)))
 
   /** 日ごとの稼働率（今日まで days 日. 確認のない日は None）. */
-  def days(
-    ids: List[UUID],
-    days: Int,
-    today: LocalDate
-  ): IO[Map[UUID, List[DayBar]]] =
+  def days(ids: List[UUID], days: Int, today: LocalDate): IO[Map[UUID, List[DayBar]]] =
     if ids.isEmpty then IO.pure(Map.empty)
     else
       tx(
@@ -655,11 +535,7 @@ final class MonitorStore(
       }
 
   /** 日ごとの集計から、今日まで days 日の稼働率（%. 判定のある確認の数で重み付け）. */
-  def uptimeOver(
-    ids: List[UUID],
-    days: Int,
-    today: LocalDate
-  ): IO[Map[UUID, Double]] =
+  def uptimeOver(ids: List[UUID], days: Int, today: LocalDate): IO[Map[UUID, Double]] =
     if ids.isEmpty then IO.pure(Map.empty)
     else
       tx(
@@ -669,18 +545,10 @@ final class MonitorStore(
           .query[(UUID, Double)].to[List].map(_.toMap)
       )
 
-  def detail(
-    id: UUID
-  ): IO[Option[MonitorDetailDto]] =
+  def detail(id: UUID): IO[Option[MonitorDetailDto]] =
     find(id).flatMap(_.traverse { m =>
       (checks(id, 100), incidents(Some(id), false, 20), days(List(id), Days, LocalDate.now(ZoneOffset.UTC)))
-        .mapN(
-          (
-            cs,
-            is,
-            ds
-          ) => MonitorDetailDto(m, cs, is, ds.getOrElse(id, Nil))
-        )
+        .mapN((cs, is, ds) => MonitorDetailDto(m, cs, is, ds.getOrElse(id, Nil)))
     })
 
   /** 状態ごとの監視の数（正常・停止・一時停止・未確認）と、続いている障害の数. */
@@ -692,8 +560,7 @@ final class MonitorStore(
   )
 
   /** 古い確認の結果を消す. */
-  def purge: IO[Int] = tx(
-    sql"delete from check_result where checked_at < now() - make_interval(days => $KeepDays)".update.run *>
-      (fr"delete from check_daily where day <" ++ today ++ fr"- $DailyKeepDays").update.run
-  )
+  def purge: IO[Int] =
+    tx(sql"delete from check_result where checked_at < now() - make_interval(days => $KeepDays)".update.run *>
+      (fr"delete from check_daily where day <" ++ today ++ fr"- $DailyKeepDays").update.run)
 }

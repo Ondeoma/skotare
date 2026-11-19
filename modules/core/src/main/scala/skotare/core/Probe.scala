@@ -14,10 +14,7 @@ import scala.jdk.CollectionConverters.*
 import scala.util.Try
 
 /** 1回の確認の結果. latencyMs は応答までの時間（取れなければ None）. */
-final case class ProbeResult(
-  ok: Boolean,
-  latencyMs: Option[Int],
-  message: String)
+final case class ProbeResult(ok: Boolean, latencyMs: Option[Int], message: String)
 
 /** 監視の確かめ方（HTTP(S)・TCP・DNS・PING）. どれも timeout を超えたら失敗にする. */
 object Probe {
@@ -31,11 +28,7 @@ object Probe {
   val MaxRegexBody = 64 * 1024
   val RegexBudget: FiniteDuration = 500.millis
 
-  def run(
-    kind: String,
-    cfg: MonitorConfig,
-    timeout: FiniteDuration
-  ): IO[ProbeResult] = {
+  def run(kind: String, cfg: MonitorConfig, timeout: FiniteDuration): IO[ProbeResult] = {
     val io = kind match {
       case Kind.Http => http(cfg, timeout)
       case Kind.Tcp => tcp(cfg.host, cfg.port, timeout)
@@ -49,9 +42,7 @@ object Probe {
   }
 
   /** 例外を、画面に出す短い説明にする. */
-  def describe(
-    e: Throwable
-  ): String = e match {
+  def describe(e: Throwable): String = e match {
     case _: java.net.http.HttpTimeoutException | _: java.net.SocketTimeoutException => "時間内に応答がありません"
     case _: java.net.UnknownHostException => s"ホストが見つかりません（${e.getMessage}）"
     case _: java.net.ConnectException => s"接続できません（${Option(e.getMessage).getOrElse("接続を拒否されました")}）"
@@ -62,9 +53,7 @@ object Probe {
       ).filter(_.nonEmpty).map(m => s"${e.getClass.getSimpleName}: $m").getOrElse(e.getClass.getSimpleName)
   }
 
-  private def elapsed(
-    start: Long
-  ): Int = ((System.nanoTime() - start) / 1000000L).toInt
+  private def elapsed(start: Long): Int = ((System.nanoTime() - start) / 1000000L).toInt
 
   // ------------------------------------------------------------------ HTTP(S)
 
@@ -73,10 +62,7 @@ object Probe {
   private lazy val noFollow =
     HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).connectTimeout(JDuration.ofSeconds(30)).build()
 
-  def http(
-    c: MonitorConfig,
-    timeout: FiniteDuration
-  ): IO[ProbeResult] =
+  def http(c: MonitorConfig, timeout: FiniteDuration): IO[ProbeResult] =
     IO.defer {
       val publisher =
         if c.body.isEmpty then HttpRequest.BodyPublishers.noBody() else HttpRequest.BodyPublishers.ofString(c.body)
@@ -114,13 +100,11 @@ object Probe {
     }
 
   /** 応答を設定と照らし合わせる（Right は成功の説明、Left は失敗の理由）. */
-  def checkHttp(
-    c: MonitorConfig,
-    code: Int,
-    body: String,
-    certNotAfter: Option[Instant],
-    now: Instant
-  ): Either[String, String] = {
+  def checkHttp(c: MonitorConfig,
+                code: Int,
+                body: String,
+                certNotAfter: Option[Instant],
+                now: Instant): Either[String, String] = {
     val ranges = StatusMatcher.parse(c.expectStatus).getOrElse(List(200 -> 299))
     val certDays = certNotAfter.map(t => JDuration.between(now, t).toDays)
     for {
@@ -152,28 +136,18 @@ object Probe {
   private final class RegexTimeout extends RuntimeException("regex timeout", null, false, false)
 
   /** 文字を読むたびに期限を確かめる（java.util.regex は中断できないため、期限を過ぎたら例外で抜ける）. */
-  private final class Deadline(
-    s: CharSequence,
-    until: Long) extends CharSequence {
+  private final class Deadline(s: CharSequence, until: Long) extends CharSequence {
     def length: Int = s.length
-    def charAt(
-      i: Int
-    ): Char = {
+    def charAt(i: Int): Char = {
       if System.nanoTime() > until then throw new RegexTimeout
       s.charAt(i)
     }
-    def subSequence(
-      a: Int,
-      b: Int
-    ): CharSequence = new Deadline(s.subSequence(a, b), until)
+    def subSequence(a: Int, b: Int): CharSequence = new Deadline(s.subSequence(a, b), until)
     override def toString: String = s.toString
   }
 
   /** 本文（先頭 MaxRegexBody 文字）に正規表現が見つかるか. 時間がかかりすぎる・深くなりすぎる正規表現は失敗にする. */
-  def regexFind(
-    re: String,
-    body: String
-  ): Either[String, Boolean] =
+  def regexFind(re: String, body: String): Either[String, Boolean] =
     try Right(java.util.regex.Pattern.compile(re).matcher(new Deadline(
         body.take(MaxRegexBody),
         System.nanoTime() + RegexBudget.toNanos
@@ -186,11 +160,7 @@ object Probe {
 
   // ------------------------------------------------------------------ TCP
 
-  def tcp(
-    host: String,
-    port: Int,
-    timeout: FiniteDuration
-  ): IO[ProbeResult] =
+  def tcp(host: String, port: Int, timeout: FiniteDuration): IO[ProbeResult] =
     IO.interruptible {
       val start = System.nanoTime()
       val s = new Socket()
@@ -202,10 +172,7 @@ object Probe {
 
   // ------------------------------------------------------------------ DNS
 
-  def dns(
-    c: MonitorConfig,
-    timeout: FiniteDuration
-  ): IO[ProbeResult] =
+  def dns(c: MonitorConfig, timeout: FiniteDuration): IO[ProbeResult] =
     IO.interruptible {
       val env = new Hashtable[String, String]()
       env.put("java.naming.factory.initial", "com.sun.jndi.dns.DnsContextFactory")
@@ -224,10 +191,7 @@ object Probe {
     }
 
   /** 答えを期待する値と照らし合わせる（末尾の「.」と大文字・小文字の違いは見ない）. */
-  def checkDns(
-    c: MonitorConfig,
-    answers: List[String]
-  ): Either[String, String] = {
+  def checkDns(c: MonitorConfig, answers: List[String]): Either[String, String] = {
     val norm = (s: String) => s.trim.stripSuffix(".").toLowerCase
     val shown = answers.take(5).mkString(", ")
     if answers.isEmpty then Left(s"${c.recordType} レコードがありません")
@@ -244,10 +208,7 @@ object Probe {
    * ping コマンドを1回だけ送る（ICMP は特権が要るため OS のコマンドに任せる）. ホスト名は MonitorCheck.host で確かめたもの.
    * ping コマンドがなければ InetAddress.isReachable（ICMP が使えなければ TCP の echo）で代わりに確かめる.
    */
-  def ping(
-    host: String,
-    timeout: FiniteDuration
-  ): IO[ProbeResult] = {
+  def ping(host: String, timeout: FiniteDuration): IO[ProbeResult] = {
     val mac = sys.props.get("os.name").exists(_.toLowerCase.contains("mac"))
     // -W は macOS ではミリ秒、Linux（iputils・busybox）では秒
     val wait = if mac then timeout.toMillis.toString else math.max(1L, timeout.toSeconds).toString
@@ -277,9 +238,7 @@ object Probe {
     }
   }
 
-  extension [A](
-    o: java.util.Optional[A]
-  ) {
+  extension [A](o: java.util.Optional[A]) {
     private def toScala: Option[A] = if o.isPresent then Some(o.get) else None
   }
 }

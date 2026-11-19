@@ -9,9 +9,7 @@ import scala.concurrent.duration.*
 class ProbeSpec extends munit.CatsEffectSuite {
 
   private val now = Instant.parse("2026-11-17T00:00:00Z")
-  private def http(
-    f: MonitorConfig => MonitorConfig
-  ) = f(MonitorConfig(url = "https://example.com"))
+  private def http(f: MonitorConfig => MonitorConfig) = f(MonitorConfig(url = "https://example.com"))
 
   test("期待する応答コードの書き方") {
     assertEquals(StatusMatcher.parse("200-299,301"), Right(List(200 -> 299, 301 -> 301)))

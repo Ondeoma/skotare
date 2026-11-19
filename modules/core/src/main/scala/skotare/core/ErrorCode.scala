@@ -6,10 +6,7 @@ package skotare.core
  * 5xxx: 外部との連携（50xx stui, 51xx プッシュ通知, 52xx OAuth で連携したアプリ）, 6xxx: ユーザー（名前・アイコン）,
  * 9xxx: サーバー内部・バックグラウンドの処理（確認・判定・通知の行列・掃除）.
  */
-enum ErrorCode(
-  val code: String,
-  val status: Int,
-  val message: String) extends sbirds.shared.ErrorCode {
+enum ErrorCode(val code: String, val status: Int, val message: String) extends sbirds.shared.ErrorCode {
   case ApiTokenReadOnly extends ErrorCode("SKOTARE-1001", 403, "参照のみの API トークンでは変更できません")
   case ApiTokenNotAllowed extends ErrorCode("SKOTARE-1002", 403, "この操作は API トークンではできません")
   case CrossSiteRequest extends ErrorCode("SKOTARE-1003", 403, "画面以外からの更新の要求は受け付けません")

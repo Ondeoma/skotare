@@ -15,16 +15,15 @@ import java.util.UUID
 import scala.concurrent.duration.*
 
 /** 監視・障害・通知先・ステータスページ（管理）と、ゲストに見せるステータスページ. */
-final class MonitorRoutes(
-  monitors: MonitorStore,
-  notifiers: NotifierStore,
-  pages: PageStore,
-  nodes: NodeStore,
-  senders: Senders,
-  box: Option[SecretBox],
-  val sessions: SessionAuth,
-  announcer: Announcer,
-  stui: Option[StuiLink] = None) extends RouteSupport {
+final class MonitorRoutes(monitors: MonitorStore,
+                          notifiers: NotifierStore,
+                          pages: PageStore,
+                          nodes: NodeStore,
+                          senders: Senders,
+                          box: Option[SecretBox],
+                          val sessions: SessionAuth,
+                          announcer: Announcer,
+                          stui: Option[StuiLink] = None) extends RouteSupport {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     // ログインしない人も見られる（公開しないページはログインした人だけ）
@@ -51,10 +50,7 @@ final class MonitorRoutes(
     case req @ DELETE -> Root / "api" / "pages" / UuidVar(id) => deletePage(req, id)
   }
 
-  private def getPublicStatus(
-    req: Request[IO],
-    slug: String
-  ): IO[Response[IO]] =
+  private def getPublicStatus(req: Request[IO], slug: String): IO[Response[IO]] =
     pages.bySlug(slug).flatMap {
       case Some(p) if p.public =>
         Metrics.count("skotare.status_page.views", "page" -> p.slug) *>
@@ -65,38 +61,24 @@ final class MonitorRoutes(
       case None => err(ErrorCode.PageNotFound)
     }
 
-  private def getSummary(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getSummary(req: Request[IO]): IO[Response[IO]] =
     authed(req)(_ =>
       (nodes.list, nodes.regions, monitors.counts).flatMapN {
-        (
-          ns,
-          rs,
-          c
-        ) =>
+        (ns, rs, c) =>
           Ok(SummaryDto(c._1, c._2, c._3, c._4, c._5, ns, rs))
       }
     )
 
-  private def getNodes(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getNodes(req: Request[IO]): IO[Response[IO]] =
     authed(req)(_ => nodes.list.flatMap(Ok(_)))
 
-  private def getRegions(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getRegions(req: Request[IO]): IO[Response[IO]] =
     authed(req)(_ => nodes.regions.flatMap(Ok(_)))
 
-  private def getMonitors(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getMonitors(req: Request[IO]): IO[Response[IO]] =
     authed(req)(_ => cachedList.flatMap(Ok(_)))
 
-  private def postMonitors(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMonitors(req: Request[IO]): IO[Response[IO]] =
     authed(req)(u =>
       body[MonitorReq](req)(r =>
         valid(validMonitor(r))(m =>
@@ -107,9 +89,7 @@ final class MonitorRoutes(
       )
     )
 
-  private def postMonitorsTest(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMonitorsTest(req: Request[IO]): IO[Response[IO]] =
     authed(req)(_ =>
       body[MonitorReq](req)(r =>
         valid(validMonitor(r))(m =>
@@ -119,16 +99,10 @@ final class MonitorRoutes(
       )
     )
 
-  private def getMonitor(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getMonitor(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(_ => monitors.detail(id).flatMap(_.fold(err(ErrorCode.MonitorNotFound))(Ok(_))))
 
-  private def putMonitor(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def putMonitor(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(_ =>
       body[MonitorReq](req)(r =>
         valid(validMonitor(r))(m =>
@@ -143,21 +117,13 @@ final class MonitorRoutes(
       )
     )
 
-  private def deleteMonitor(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteMonitor(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(_ => changedMonitors(monitors.delete(id)).ifM(NoContent(), err(ErrorCode.MonitorNotFound)))
 
-  private def postMonitorCheck(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postMonitorCheck(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(_ => monitors.checkSoon(id).ifM(Accepted(), err(ErrorCode.MonitorNotFoundOrPaused)))
 
-  private def getIncidents(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getIncidents(req: Request[IO]): IO[Response[IO]] =
     authed(req)(_ =>
       monitors.incidents(
         param(req, "monitor").flatMap(s => scala.util.Try(UUID.fromString(s)).toOption),
@@ -166,61 +132,40 @@ final class MonitorRoutes(
       ).flatMap(Ok(_))
     )
 
-  private def getNotifiers(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getNotifiers(req: Request[IO]): IO[Response[IO]] =
     authed(req)(_ => notifiers.list.flatMap(ns => Ok(ns.map(_.dto))))
 
-  private def postNotifiers(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postNotifiers(req: Request[IO]): IO[Response[IO]] =
     authed(req)(u =>
       body[NotifierReq](req)(r =>
-        prepare(u, None, r).flatMap(valid(_)(
-          (
-            n,
-            s
-          ) =>
-            notifiers.save(None, n, s).flatMap(x => Created(x.get.dto))
+        prepare(u, None, r).flatMap(valid(_)((n, s) =>
+          notifiers.save(None, n, s).flatMap(x => Created(x.get.dto))
         ))
       )
     )
 
-  private def putNotifier(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def putNotifier(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(u =>
       notifiers.find(id).flatMap {
         case None => err(ErrorCode.NotifierNotFound)
         case cur => body[NotifierReq](req)(r =>
-            prepare(u, cur, r).flatMap(valid(_)(
-              (
-                n,
-                s
-              ) =>
-                notifiers.save(Some(id), n, s).flatMap(_.fold(err(ErrorCode.NotifierNotFound))(x =>
-                  dropHook(u, cur, Some(x.config)) *> Ok(x.dto)
-                ))
+            prepare(u, cur, r).flatMap(valid(_)((n, s) =>
+              notifiers.save(Some(id), n, s).flatMap(_.fold(err(ErrorCode.NotifierNotFound))(x =>
+                dropHook(u, cur, Some(x.config)) *> Ok(x.dto)
+              ))
             ))
           )
       }
     )
 
-  private def deleteNotifier(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteNotifier(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(u =>
       notifiers.find(id).flatMap(cur =>
         notifiers.delete(id).ifM(dropHook(u, cur, None) *> NoContent(), err(ErrorCode.NotifierNotFound))
       )
     )
 
-  private def postNotifierTest(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postNotifierTest(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(_ =>
       testAllowed(id).ifM(
         notifiers.find(id).flatMap {
@@ -234,14 +179,10 @@ final class MonitorRoutes(
       )
     )
 
-  private def getPages(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getPages(req: Request[IO]): IO[Response[IO]] =
     authed(req)(_ => pages.list.flatMap(Ok(_)))
 
-  private def postPages(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postPages(req: Request[IO]): IO[Response[IO]] =
     authed(req)(_ =>
       body[StatusPageReq](req)(r =>
         valid(validPage(r))(p =>
@@ -250,10 +191,7 @@ final class MonitorRoutes(
       )
     )
 
-  private def putPage(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def putPage(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(_ =>
       body[StatusPageReq](req)(r =>
         valid(validPage(r))(p =>
@@ -265,19 +203,14 @@ final class MonitorRoutes(
       )
     )
 
-  private def deletePage(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deletePage(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(_ =>
       (pages.delete(id) <* publicCache.forget(id)).ifM(NoContent(), err(ErrorCode.PageNotFound))
     )
 
   // ------------------------------------------------------------------ 入力の確かめ
 
-  private def validMonitor(
-    r: MonitorReq
-  ): Either[String, MonitorReq] =
+  private def validMonitor(r: MonitorReq): Either[String, MonitorReq] =
     for {
       name <- Check.name(r.name)
       _ <- Either.cond(r.intervalSec >= 20 && r.intervalSec <= 86400, (), "確認の間隔は20秒〜1日です")
@@ -290,10 +223,7 @@ final class MonitorRoutes(
       else scala.util.Try(java.util.regex.Pattern.compile(cfg.bodyRegex)).toEither.left.map(_ => "本文の正規表現が正しくありません")
     } yield r.copy(name = name, config = cfg)
 
-  private def httpUrl(
-    s: String,
-    what: String
-  ): Either[String, String] = {
+  private def httpUrl(s: String, what: String): Either[String, String] = {
     val t = s.trim
     Either.cond(
       (t.startsWith("https://") || t.startsWith("http://")) && t.length <= 2000 && !t.exists(_.isWhitespace),
@@ -306,10 +236,8 @@ final class MonitorRoutes(
    * 通知先の入力を確かめ、秘密の値を暗号化する（None なら今のまま）. current は変える前の通知先（作るときは None）.
    * 種類や skereru の URL を変えるときは、秘密の値を入れ直してもらう（今の API キー・URL を別の送り先へ送らせないため）.
    */
-  private def validNotifier(
-    r: NotifierReq,
-    current: Option[NotifierRow]
-  ): Either[String, (NotifierReq, Option[String])] = {
+  private def validNotifier(r: NotifierReq,
+                            current: Option[NotifierRow]): Either[String, (NotifierReq, Option[String])] = {
     val secret = r.secret.map(_.trim).filter(_.nonEmpty)
     for {
       name <- Check.name(r.name)
@@ -323,11 +251,9 @@ final class MonitorRoutes(
   }
 
   /** 秘密の値（受信 Webhook の URL・skereru の API キー・Webhook の URL）で送る通知先. */
-  private def secretNotifier(
-    r: NotifierReq,
-    current: Option[NotifierRow],
-    secret: Option[String]
-  ): Either[String, (NotifierConfig, Option[String])] =
+  private def secretNotifier(r: NotifierReq,
+                             current: Option[NotifierRow],
+                             secret: Option[String]): Either[String, (NotifierConfig, Option[String])] =
     for {
       _ <- if r.kind == NotifierKind.Skereru then secret.traverse_(s => Either.cond(s.length <= 500, (), "APIキーが長すぎます"))
       else secret.traverse_(httpUrl(_, NotifierKind.secretLabel(r.kind)))
@@ -350,11 +276,9 @@ final class MonitorRoutes(
     } yield (cfg, enc)
 
   /** 通知先の入力を確かめ、stui のチャンネルなら投稿する人・受信 Webhook を決める. (保存する内容, 秘密の値（None なら今のまま）). */
-  private def prepare(
-    u: User,
-    current: Option[NotifierRow],
-    r: NotifierReq
-  ): IO[Either[String, (NotifierReq, Option[String])]] =
+  private def prepare(u: User,
+                      current: Option[NotifierRow],
+                      r: NotifierReq): IO[Either[String, (NotifierReq, Option[String])]] =
     validNotifier(r, current) match {
       case Left(e) => IO.pure(Left(e))
       case Right((n, enc)) => n.config.channelId match {
@@ -368,12 +292,10 @@ final class MonitorRoutes(
    * stui のチャンネルに、受信 Webhook を作って送る通知先. 前と同じチャンネルの Webhook なら、そのまま使う.
    * 作れるのは、変えた人がそのチャンネルの管理者のときだけ（stui も確かめる）. 作った URL は秘密の値として暗号化して保存する.
    */
-  private def stuiHook(
-    u: User,
-    current: Option[NotifierRow],
-    n: NotifierReq,
-    ch: UUID
-  ): IO[Either[String, (NotifierReq, Option[String])]] =
+  private def stuiHook(u: User,
+                       current: Option[NotifierRow],
+                       n: NotifierReq,
+                       ch: UUID): IO[Either[String, (NotifierReq, Option[String])]] =
     current.filter(c =>
       c.kind == NotifierKind.Stui && c.config.stuiHook && c.config.channelId.contains(ch) && c.secret.nonEmpty
     ) match {
@@ -388,17 +310,13 @@ final class MonitorRoutes(
               case Right(cs) => cs.find(_.id == ch) match {
                   case None => IO.pure(Left("そのチャンネルは選べません（stui で参加しているチャンネルから選んでください）"))
                   case Some(c) if !c.admin => IO.pure(Left("受信 Webhook を作れるのは、チャンネルの管理者だけです"))
-                  case Some(c) => s.createHook(u.id, ch, n.name).map(_.map(
+                  case Some(c) => s.createHook(u.id, ch, n.name).map(_.map((hookId, url) =>
                       (
-                        hookId,
-                        url
-                      ) =>
-                        (
-                          n.copy(config =
-                            NotifierConfig(channelId = Some(ch), channelName = c.name, hookId = Some(hookId))
-                          ),
-                          Some(b.encrypt(url))
-                        )
+                        n.copy(config =
+                          NotifierConfig(channelId = Some(ch), channelName = c.name, hookId = Some(hookId))
+                        ),
+                        Some(b.encrypt(url))
+                      )
                     ))
                 }
             }
@@ -406,16 +324,9 @@ final class MonitorRoutes(
     }
 
   /** 前に作った受信 Webhook を、使わなくなったら消す（消した人がチャンネルの管理者のときだけ消せる. 消せなくても続ける）. */
-  private def dropHook(
-    u: User,
-    before: Option[NotifierRow],
-    after: Option[NotifierConfig]
-  ): IO[Unit] =
+  private def dropHook(u: User, before: Option[NotifierRow], after: Option[NotifierConfig]): IO[Unit] =
     (stui, before.flatMap(_.config.hookId).filterNot(h => after.exists(_.hookId.contains(h)))).tupled.traverse_(
-      (
-        s,
-        h
-      ) => s.deleteHook(u.id, h)
+      (s, h) => s.deleteHook(u.id, h)
     )
 
   /**
@@ -423,11 +334,7 @@ final class MonitorRoutes(
    * 前と同じチャンネルで、前に選んだ人がまだ連携していれば、その人のまま（ほかの人が監視の選択だけを変えられるように）.
    * そうでなければ、変えた人が連携していて、そのチャンネルに参加している必要がある（その人のトークンで投稿する）.
    */
-  private def stuiOwner(
-    u: User,
-    current: Option[NotifierRow],
-    n: NotifierReq
-  ): IO[Either[String, NotifierReq]] =
+  private def stuiOwner(u: User, current: Option[NotifierRow], n: NotifierReq): IO[Either[String, NotifierReq]] =
     n.config.channelId match {
       case None => IO.pure(Right(n))
       case Some(ch) =>
@@ -451,9 +358,7 @@ final class MonitorRoutes(
         }
     }
 
-  private def validPage(
-    r: StatusPageReq
-  ): Either[String, StatusPageReq] =
+  private def validPage(r: StatusPageReq): Either[String, StatusPageReq] =
     for {
       slug <- Slug.valid(r.slug)
       title <- Check.name(r.title, "題名")
@@ -477,26 +382,17 @@ final class MonitorRoutes(
    */
   private val listCache = new TtlCache[Unit, List[MonitorDto]](5000L)
   private def cachedList: IO[List[MonitorDto]] = listCache.get(())(monitors.list)
-  private def changedMonitors[A](
-    io: IO[A]
-  ): IO[A] = io <* listCache.clear
+  private def changedMonitors[A](io: IO[A]): IO[A] = io <* listCache.clear
 
   /** 通知先の試しの送信は、通知先ごとに10秒に1回まで（宛先へ大量に送らせない）. */
   private val lastTest = Ref.unsafe[IO, Map[UUID, Long]](Map.empty)
-  private def testAllowed(
-    id: UUID
-  ): IO[Boolean] =
+  private def testAllowed(id: UUID): IO[Boolean] =
     IO.realTime.map(_.toMillis).flatMap(now =>
       lastTest.modify { m =>
         val ok = m.get(id).forall(now - _ >= 10000L)
         (
           if ok then
-            m.filter(
-              (
-                _,
-                t
-              ) => now - t < 10000L
-            ) + (id -> now)
+            m.filter((_, t) => now - t < 10000L) + (id -> now)
           else m,
           ok
         )
@@ -504,9 +400,7 @@ final class MonitorRoutes(
     )
 
   /** ゲストに見せる内容（監視の中身（URL・ホスト）は出さない. 障害は14日分と、続いているもの）. */
-  private def publicStatus(
-    p: StatusPageDto
-  ): IO[PublicStatusDto] = {
+  private def publicStatus(p: StatusPageDto): IO[PublicStatusDto] = {
     val ids = p.items.map(_.monitorId)
     for {
       now <- IO.realTimeInstant

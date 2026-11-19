@@ -21,18 +21,15 @@ object Judge {
    * 拠点の材料. canaryUp・canaryDown はその拠点から見た基準点の状態の数.
    * lonelyDown は「ほかの動いている拠点では正常なのに、この拠点では停止」の監視先の数、comparable は比べられる監視先の数.
    */
-  final case class RegionFacts(
-    aliveNodes: Int,
-    canaryUp: Int,
-    canaryDown: Int,
-    lonelyDown: Int,
-    comparable: Int,
-    stalled: Boolean = false)
+  final case class RegionFacts(aliveNodes: Int,
+                               canaryUp: Int,
+                               canaryDown: Int,
+                               lonelyDown: Int,
+                               comparable: Int,
+                               stalled: Boolean = false)
 
   /** (health, 理由). */
-  def region(
-    f: RegionFacts
-  ): (String, String) = {
+  def region(f: RegionFacts): (String, String) = {
     val canaries = f.canaryUp + f.canaryDown
     if f.aliveNodes <= 0 then RegionHealth.Offline -> "動いているノードがありません"
     else if f.stalled then RegionHealth.Suspect -> "ノードは動いていますが、確認が回っていません（確かめる時刻を大きく過ぎています）"
@@ -44,20 +41,14 @@ object Judge {
   }
 
   /** 停止と判断するのに要る拠点の数. confirm が 0 なら過半数、拠点の数より多ければすべて. */
-  def need(
-    voters: Int,
-    confirm: Int
-  ): Int = if confirm <= 0 then voters / 2 + 1 else confirm min voters
+  def need(voters: Int, confirm: Int): Int = if confirm <= 0 then voters / 2 + 1 else confirm min voters
 
   /**
    * 健全な拠点の票（未確認 pending も1票として数える）から、監視の状態を決める.
    * 停止の票が必要な数に達したら停止、残りの票がすべて停止でも達しないほど正常の票があれば正常、どちらでもなければ None（今のまま）.
    * （作ったばかり・確かめ直しの直後に、先に確かめた1つの拠点だけで停止と判断しないため）
    */
-  def overall(
-    votes: List[String],
-    confirm: Int
-  ): Option[String] =
+  def overall(votes: List[String], confirm: Int): Option[String] =
     if votes.isEmpty then None
     else {
       val n = need(votes.size, confirm)
@@ -67,34 +58,23 @@ object Judge {
     }
 
   /** ある拠点から見た、ある監視の状態. canary は基準点か、stale は確かめる時刻を大きく過ぎているか（その状態は古いので比べない）. */
-  final case class Vote(
-    monitor: java.util.UUID,
-    region: String,
-    status: String,
-    canary: Boolean,
-    stale: Boolean = false)
+  final case class Vote(monitor: java.util.UUID,
+                        region: String,
+                        status: String,
+                        canary: Boolean,
+                        stale: Boolean = false)
 
   /** 拠点ごとの (health, 理由)（regions と同じ順）. regions は (拠点, 動いているノードの数)、votes は一時停止していない監視の拠点ごとの状態. */
-  def regions(
-    regions: List[(String, Int)],
-    votes: List[Vote]
-  ): List[(String, String)] = {
+  def regions(regions: List[(String, Int)], votes: List[Vote]): List[(String, String)] = {
     val alive = regions.filter(_._2 > 0).map(_._1).toSet
     val byMonitor = votes.groupBy(_.monitor)
-    def known(
-      v: Vote
-    ) = !v.stale && (v.status == MonStatus.Up || v.status == MonStatus.Down)
+    def known(v: Vote) = !v.stale && (v.status == MonStatus.Up || v.status == MonStatus.Down)
     regions.map {
-      (
-        name,
-        nodes
-      ) =>
+      (name, nodes) =>
         val all = votes.filter(_.region == name)
         val mine = all.filterNot(_.stale)
         val canary = mine.filter(_.canary)
-        def others(
-          v: Vote
-        ) = byMonitor(v.monitor).filter(x => x.region != name && alive(x.region) && known(x))
+        def others(v: Vote) = byMonitor(v.monitor).filter(x => x.region != name && alive(x.region) && known(x))
         val comparable = mine.filter(v => !v.canary && known(v) && others(v).nonEmpty)
         val lonely = comparable.filter(v => v.status == MonStatus.Down && others(v).exists(_.status == MonStatus.Up))
         region(RegionFacts(

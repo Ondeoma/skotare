@@ -70,9 +70,8 @@ class FlowSpec extends munit.CatsEffectSuite {
   private val received = new ConcurrentLinkedQueue[(String, Json, Option[String])]()
   private val fakeSiblings: HttpRoutes[IO] = {
     import org.http4s.dsl.io.*
-    def authed(
-      r: Request[IO]
-    ) = r.headers.get[Authorization].exists(_.credentials == Credentials.Token(AuthScheme.Bearer, stuiToken))
+    def authed(r: Request[IO]) =
+      r.headers.get[Authorization].exists(_.credentials == Credentials.Token(AuthScheme.Bearer, stuiToken))
     HttpRoutes.of[IO] {
       case r @ POST -> Root / "oauth" / "token" =>
         r.as[UrlForm].flatMap(f =>
@@ -141,14 +140,13 @@ class FlowSpec extends munit.CatsEffectSuite {
     }
   }
 
-  private final case class Env(
-    idp: HttpApp[IO],
-    app: HttpApp[IO],
-    xa: doobie.Transactor[IO],
-    worker: Worker,
-    monitors: MonitorStore,
-    nodes: NodeStore,
-    targetUrl: String)
+  private final case class Env(idp: HttpApp[IO],
+                               app: HttpApp[IO],
+                               xa: doobie.Transactor[IO],
+                               worker: Worker,
+                               monitors: MonitorStore,
+                               nodes: NodeStore,
+                               targetUrl: String)
 
   /** IdP・監視の相手・アプリを用意する. DB はまっさらにする. */
   private val fixture = ResourceSuiteLocalFixture(
@@ -202,15 +200,11 @@ class FlowSpec extends munit.CatsEffectSuite {
 
   override def munitFixtures = List(fixture)
 
-  private def location(
-    r: Response[IO]
-  ): Uri = r.headers.get[Location].map(_.uri).getOrElse(fail(s"no Location (${r.status})"))
+  private def location(r: Response[IO]): Uri =
+    r.headers.get[Location].map(_.uri).getOrElse(fail(s"no Location (${r.status})"))
 
   /** IdP でログインして、セッションの Cookie を受け取る. */
-  private def login(
-    name: String,
-    email: String
-  ): IO[String] = {
+  private def login(name: String, email: String): IO[String] = {
     val e = fixture()
     for {
       r1 <- e.app.run(Request[IO](Method.GET, uri"/auth/login?returnTo=/incidents"))
@@ -235,12 +229,7 @@ class FlowSpec extends munit.CatsEffectSuite {
     } yield r3.cookies.find(_.name == "skotare_session").map(_.content).getOrElse(fail("no session cookie"))
   }
 
-  private def call(
-    token: String,
-    m: Method,
-    path: String,
-    body: Option[Json] = None
-  ): IO[Response[IO]] = {
+  private def call(token: String, m: Method, path: String, body: Option[Json] = None): IO[Response[IO]] = {
     val base = Request[IO](
       m,
       Uri.unsafeFromString(path)
@@ -248,35 +237,23 @@ class FlowSpec extends munit.CatsEffectSuite {
     fixture().app.run(body.fold(base)(base.withEntity(_)))
   }
 
-  private def bearer(
-    token: String,
-    m: Method,
-    path: String,
-    body: Option[Json] = None
-  ): IO[Response[IO]] = {
+  private def bearer(token: String, m: Method, path: String, body: Option[Json] = None): IO[Response[IO]] = {
     val base =
       Request[IO](m, Uri.unsafeFromString(path)).putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, token)))
     fixture().app.run(body.fold(base)(base.withEntity(_)))
   }
 
-  private def json[A: io.circe.Decoder](
-    r: Response[IO]
-  ): IO[A] =
+  private def json[A: io.circe.Decoder](r: Response[IO]): IO[A] =
     if r.status.isSuccess then r.as[A] else r.bodyText.compile.string.flatMap(t => IO(fail(s"${r.status}: $t")))
 
   /** 監視を今すぐ確かめる（ワーカーの1回分）. */
-  private def checkNow(
-    id: UUID
-  ): IO[Unit] = {
+  private def checkNow(id: UUID): IO[Unit] = {
     val e = fixture()
     e.monitors.checkSoon(id) *>
       e.monitors.claimDue("default", 50).flatMap(_.filter(_.id == id).traverse_(e.worker.check))
   }
 
-  private def httpMonitor(
-    name: String,
-    url: String
-  ) =
+  private def httpMonitor(name: String, url: String) =
     MonitorReq(
       name,
       Kind.Http,
@@ -430,9 +407,7 @@ class FlowSpec extends munit.CatsEffectSuite {
   }
 
   test("stui と連携し、参加しているチャンネルを通知先に選ぶと、作った人のトークンでボットとして投稿する") {
-    def start(
-      t: String
-    ) =
+    def start(t: String) =
       call(t, Method.GET, "/api/integrations/stui/connect?returnTo=/notifiers").map { r =>
         assertEquals(r.status, Status.Found)
         val u = location(r)
@@ -441,10 +416,7 @@ class FlowSpec extends munit.CatsEffectSuite {
         assertEquals(u.params.get("redirect_uri"), Some("http://localhost:8114/api/integrations/stui/callback"))
         u.params("state")
       }
-    def back(
-      t: String,
-      state: String
-    ) =
+    def back(t: String, state: String) =
       call(t, Method.GET, s"/api/integrations/stui/callback?state=$state&code=good-code").map(location(_).renderString)
     val notifier = (ch: UUID) => NotifierReq("", NotifierKind.Stui, NotifierConfig(channelId = Some(ch)), None)
     for {
@@ -637,11 +609,7 @@ class FlowSpec extends munit.CatsEffectSuite {
       _ = assertEquals(l.status, Status.Ok)
       w <- bearer(ro.token, Method.POST, "/api/monitors", Some(httpMonitor("x", "https://example.com").asJson))
       _ = assertEquals(w.status, Status.Forbidden)
-      rpc = (
-        tok: String,
-        method: String,
-        params: Json
-      ) =>
+      rpc = (tok: String, method: String, params: Json) =>
         bearer(
           tok,
           Method.POST,
@@ -691,24 +659,13 @@ class FlowSpec extends munit.CatsEffectSuite {
     val e = fixture()
     val now = java.time.Instant.now()
     val ok = skotare.core.ProbeResult(true, Some(5), "応答コード 200")
-    def ng(
-      m: String
-    ) = skotare.core.ProbeResult(false, None, m)
-    def rec(
-      id: UUID,
-      region: String,
-      r: skotare.core.ProbeResult
-    ) =
+    def ng(m: String) = skotare.core.ProbeResult(false, None, m)
+    def rec(id: UUID, region: String, r: skotare.core.ProbeResult) =
       e.monitors.record(id, region, r, s"node-$region", java.time.Instant.now(), apiCfg.publicUrl)
-    def health(
-      region: String
-    ) = e.nodes.regions.map(_.find(_.name == region).map(_.health))
-    def status(
-      id: UUID
-    ) = e.monitors.find(id).map(_.get.status)
-    def outbox(
-      event: String
-    ) = sql"select count(*) from notification_outbox where payload->>'event' = $event".query[Int].unique.transact(e.xa)
+    def health(region: String) = e.nodes.regions.map(_.find(_.name == region).map(_.health))
+    def status(id: UUID) = e.monitors.find(id).map(_.get.status)
+    def outbox(event: String) =
+      sql"select count(*) from notification_outbox where payload->>'event' = $event".query[Int].unique.transact(e.xa)
     for {
       t <- login("拠点 担当", "region@example.com")
       _ <- List("tokyo", "osaka", "nagoya").traverse_(r => e.nodes.beat(s"node-$r", r, "test", now))
@@ -825,11 +782,7 @@ class FlowSpec extends munit.CatsEffectSuite {
   private val verifier = "v" * 50
   private val challenge = sbirds.auth.Crypto.pkceChallenge(verifier)
 
-  private def authorizeUri(
-    client: String = "skakapo",
-    redirect: String = agentCb,
-    scope: String = "read write"
-  ): Uri =
+  private def authorizeUri(client: String = "skakapo", redirect: String = agentCb, scope: String = "read write"): Uri =
     uri"/oauth/authorize".withQueryParams(Map(
       "response_type" -> "code",
       "client_id" -> client,
@@ -840,35 +793,19 @@ class FlowSpec extends munit.CatsEffectSuite {
       "code_challenge_method" -> "S256"
     ))
 
-  private def withSession(
-    session: String,
-    r: Request[IO],
-    extra: (String, String)*
-  ): Request[IO] =
+  private def withSession(session: String, r: Request[IO], extra: (String, String)*): Request[IO] =
     r.putHeaders(Cookie(cats.data.NonEmptyList(
       RequestCookie("skotare_session", session),
-      extra.toList.map(
-        (
-          k,
-          v
-        ) => RequestCookie(k, v)
-      )
+      extra.toList.map((k, v) => RequestCookie(k, v))
     )))
 
-  private def token(
-    form: (String, String)*
-  )(
-    client: String = "skakapo",
-    secret: String = "skakapo-test-secret-0123456789"
-  ): IO[Response[IO]] =
+  private def token(form: (String, String)*)(client: String = "skakapo",
+                                             secret: String = "skakapo-test-secret-0123456789"): IO[Response[IO]] =
     fixture().app.run(Request[IO](Method.POST, uri"/oauth/token").withEntity(UrlForm(form*))
       .putHeaders(Authorization(BasicCredentials(client, secret))))
 
   /** ログインした利用者が許可の画面で許可し、認可コードを受け取る. */
-  private def authorize(
-    session: String,
-    scope: String
-  ): IO[String] = {
+  private def authorize(session: String, scope: String): IO[String] = {
     val e = fixture()
     for {
       pg <- e.app.run(withSession(session, Request[IO](Method.GET, authorizeUri(scope = scope))))
@@ -897,16 +834,12 @@ class FlowSpec extends munit.CatsEffectSuite {
   }
 
   /** 許可の画面のフォームの hidden の値（ボタンの decision は除く）. */
-  private def hiddenInputs(
-    html: String
-  ): List[(String, String)] =
+  private def hiddenInputs(html: String): List[(String, String)] =
     "type=\"hidden\" name=\"([a-z_]+)\" value=\"([^\"]*)\"".r.findAllMatchIn(html).map(m =>
       m.group(1) -> m.group(2).replace("&amp;", "&")
     ).toList
 
-  private def exchange(
-    code: String
-  ): IO[Json] =
+  private def exchange(code: String): IO[Json] =
     token(
       "grant_type" -> "authorization_code",
       "code" -> code,
@@ -914,11 +847,7 @@ class FlowSpec extends munit.CatsEffectSuite {
       "code_verifier" -> verifier
     )().flatMap(json[Json])
 
-  private def mcp(
-    tok: String,
-    method: String,
-    params: Json = Json.obj()
-  ): IO[Response[IO]] =
+  private def mcp(tok: String, method: String, params: Json = Json.obj()): IO[Response[IO]] =
     bearer(
       tok,
       Method.POST,

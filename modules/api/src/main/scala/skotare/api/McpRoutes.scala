@@ -17,24 +17,16 @@ import skotare.shared.*
  * MCP（Model Context Protocol）のサーバー. POST /mcp に JSON-RPC を送る（Streamable HTTP. 応答は JSON で、SSE は使わない）.
  * 認証は API トークン（Bearer）だけ. 各ツールは REST API をそのトークンで内部から呼ぶので、権限は REST API と同じになる.
  */
-final class McpRoutes(
-  api: HttpRoutes[IO],
-  sessions: SessionAuth,
-  publicUrl: String,
-  version: String) extends Http4sDsl[IO] {
+final class McpRoutes(api: HttpRoutes[IO], sessions: SessionAuth, publicUrl: String, version: String)
+  extends Http4sDsl[IO] {
 
   private val base = publicUrl.stripSuffix("/")
   private val Versions = List("2025-06-18", "2025-03-26", "2024-11-05")
 
   // ------------------------------------------------------------------ REST API の内部呼び出し
 
-  private final class Caller(
-    auth: Authorization) {
-    def apply(
-      method: Method,
-      uri: Uri,
-      body: Option[Json] = None
-    ): IO[Either[String, Json]] = {
+  private final class Caller(auth: Authorization) {
+    def apply(method: Method, uri: Uri, body: Option[Json] = None): IO[Either[String, Json]] = {
       val req0 = Request[IO](method, uri).putHeaders(auth)
       val req = body.fold(req0)(req0.withEntity(_))
       api.run(req).value.flatMap {
@@ -48,34 +40,24 @@ final class McpRoutes(
       }
     }
 
-    def as[A: Decoder](
-      method: Method,
-      uri: Uri,
-      body: Option[Json] = None
-    ): IO[Either[String, A]] =
+    def as[A: Decoder](method: Method, uri: Uri, body: Option[Json] = None): IO[Either[String, A]] =
       apply(method, uri, body).map(_.flatMap(_.as[A].left.map(e => s"応答を読めません: ${e.getMessage}")))
   }
 
-  private def path(
-    segments: String*
-  ): Uri = Uri(path = Uri.Path(segments.toVector.map(Uri.Path.Segment(_)), absolute = true))
+  private def path(segments: String*): Uri =
+    Uri(path = Uri.Path(segments.toVector.map(Uri.Path.Segment(_)), absolute = true))
 
-  private final case class Ctx(
-    call: Caller,
-    me: MeDto)
+  private final case class Ctx(call: Caller, me: MeDto)
 
   // ------------------------------------------------------------------ 引数
 
   private type Result = IO[Either[String, String]]
 
-  private final case class Tool(
-    name: String,
-    description: String,
-    schema: Json,
-    readOnly: Boolean,
-    destructive: Boolean = false
-  )(
-    val run: (Ctx, ACursor) => Result) {
+  private final case class Tool(name: String,
+                                description: String,
+                                schema: Json,
+                                readOnly: Boolean,
+                                destructive: Boolean = false)(val run: (Ctx, ACursor) => Result) {
     def json: Json = Json.obj(
       "name" -> name.asJson,
       "description" -> description.asJson,
@@ -88,62 +70,34 @@ final class McpRoutes(
     )
   }
 
-  private def schema(
-    required: List[String],
-    props: (String, Json)*
-  ): Json =
+  private def schema(required: List[String], props: (String, Json)*): Json =
     Json.obj("type" -> "object".asJson, "properties" -> Json.obj(props*), "required" -> required.asJson)
-  private def str(
-    d: String
-  ): Json = Json.obj("type" -> "string".asJson, "description" -> d.asJson)
-  private def int(
-    d: String
-  ): Json = Json.obj("type" -> "integer".asJson, "description" -> d.asJson)
-  private def bool(
-    d: String
-  ): Json = Json.obj("type" -> "boolean".asJson, "description" -> d.asJson)
-  private def obj(
-    d: String
-  ): Json = Json.obj("type" -> "object".asJson, "description" -> d.asJson)
-  private def oneOf(
-    d: String,
-    vs: String*
-  ): Json = Json.obj("type" -> "string".asJson, "enum" -> vs.toList.asJson, "description" -> d.asJson)
+  private def str(d: String): Json = Json.obj("type" -> "string".asJson, "description" -> d.asJson)
+  private def int(d: String): Json = Json.obj("type" -> "integer".asJson, "description" -> d.asJson)
+  private def bool(d: String): Json = Json.obj("type" -> "boolean".asJson, "description" -> d.asJson)
+  private def obj(d: String): Json = Json.obj("type" -> "object".asJson, "description" -> d.asJson)
+  private def oneOf(d: String, vs: String*): Json =
+    Json.obj("type" -> "string".asJson, "enum" -> vs.toList.asJson, "description" -> d.asJson)
 
-  private def need(
-    a: ACursor,
-    k: String
-  ): Either[String, String] = opt(a, k).filter(_.nonEmpty).toRight(s"$k を指定してください")
-  private def opt(
-    a: ACursor,
-    k: String
-  ): Option[String] = a.get[String](k).toOption.map(_.trim)
+  private def need(a: ACursor, k: String): Either[String, String] =
+    opt(a, k).filter(_.nonEmpty).toRight(s"$k を指定してください")
+  private def opt(a: ACursor, k: String): Option[String] = a.get[String](k).toOption.map(_.trim)
 
-  extension [A](
-    io: IO[Either[String, A]]
-  ) {
-    private def andThen[B](
-      f: A => IO[Either[String, B]]
-    ): IO[Either[String, B]] = io.flatMap(_.fold(e => IO.pure(Left(e)), f))
-    private def mapR[B](
-      f: A => B
-    ): IO[Either[String, B]] = io.map(_.map(f))
+  extension [A](io: IO[Either[String, A]]) {
+    private def andThen[B](f: A => IO[Either[String, B]]): IO[Either[String, B]] =
+      io.flatMap(_.fold(e => IO.pure(Left(e)), f))
+    private def mapR[B](f: A => B): IO[Either[String, B]] = io.map(_.map(f))
   }
 
   // ------------------------------------------------------------------ 監視
 
-  private def monitors(
-    c: Ctx
-  ) = c.call.as[List[MonitorDto]](Method.GET, path("api", "monitors"))
+  private def monitors(c: Ctx) = c.call.as[List[MonitorDto]](Method.GET, path("api", "monitors"))
 
   /**
    * 監視の指定（ID か、ただ1つに決まる名前）. 名前が一致しない・いくつも当たるときは候補を示して失敗にする
    * （変更・削除のツールで、思っていない監視に当たらないように. 部分一致では選ばない）.
    */
-  private def monitor(
-    c: Ctx,
-    a: ACursor
-  ): IO[Either[String, MonitorDto]] =
+  private def monitor(c: Ctx, a: ACursor): IO[Either[String, MonitorDto]] =
     IO.pure(need(a, "monitor")).andThen(v =>
       monitors(c).mapR { ms =>
         ms.find(_.id.toString == v).map(Right(_)).getOrElse(ms.filter(_.name == v) match {
@@ -158,13 +112,9 @@ final class McpRoutes(
       }.map(_.flatten)
     )
 
-  private def pct(
-    v: Option[Double]
-  ): String = v.fold("-")(x => f"$x%.2f%%")
+  private def pct(v: Option[Double]): String = v.fold("-")(x => f"$x%.2f%%")
 
-  private def line(
-    m: MonitorDto
-  ): String =
+  private def line(m: MonitorDto): String =
     s"- ${m.name} [${MonStatus.label(m.status)}] ${Kind.label(m.kind)} ${m.target} / 24時間 ${pct(m.uptime24h)} / 30日 ${pct(m.uptime30d)}" +
       m.lastLatencyMs.fold("")(ms => s" / ${ms}ms") +
       m.lastMessage.filter(_ => m.status == MonStatus.Down).fold("")(x => s" / $x") + s" (id: ${m.id})"
@@ -218,10 +168,7 @@ final class McpRoutes(
   )
 
   /** 引数を、元（変更なら今の監視）に重ねて MonitorReq の JSON にする. */
-  private def monitorJson(
-    a: ACursor,
-    cur: Option[MonitorDto]
-  ): Json = {
+  private def monitorJson(a: ACursor, cur: Option[MonitorDto]): Json = {
     val args = a.focus.flatMap(_.asObject).getOrElse(io.circe.JsonObject.empty)
     val cfg0 = cur.map(_.config.asJson).getOrElse(Json.obj())
     // 新しく作るときは、省いた項目を MonitorReq の既定の値にまかせる
@@ -230,20 +177,15 @@ final class McpRoutes(
     req0.deepMerge(Json.fromJsonObject(args.filterKeys(reqKeys.contains))).deepMerge(Json.obj("config" -> cfg))
   }
 
-  private def simple(
-    c: Ctx,
-    a: ACursor,
-    f: MonitorDto => IO[Either[String, Json]],
-    done: MonitorDto => String
-  ): Result =
+  private def simple(c: Ctx,
+                     a: ACursor,
+                     f: MonitorDto => IO[Either[String, Json]],
+                     done: MonitorDto => String): Result =
     monitor(c, a).andThen(m => f(m).mapR(_ => done(m)))
 
   private val tools: List[Tool] = List(
     Tool("get_status", "全体の様子（状態ごとの監視の数・続いている障害・停止中の監視・拠点の健全性・動いているノード）", schema(Nil), readOnly = true) {
-      (
-        c,
-        _
-      ) =>
+      (c, _) =>
         c.call.as[SummaryDto](Method.GET, path("api", "summary")).andThen { s =>
           monitors(c).mapR { ms =>
             val down = ms.filter(_.status == MonStatus.Down)
@@ -266,20 +208,14 @@ final class McpRoutes(
       schema(Nil, "status" -> oneOf("この状態のものだけ", "up", "down", "paused", "pending")),
       readOnly = true
     ) {
-      (
-        c,
-        a
-      ) =>
+      (c, a) =>
         monitors(c).mapR { ms =>
           val xs = opt(a, "status").filter(_.nonEmpty).fold(ms)(s => ms.filter(_.status == s))
           if xs.isEmpty then "監視はありません" else xs.map(line).mkString("\n")
         }
     },
     Tool("get_monitor", "監視の詳細（設定・最近の結果・障害）", schema(List("monitor"), "monitor" -> str("監視の名前か ID")), readOnly = true) {
-      (
-        c,
-        a
-      ) =>
+      (c, a) =>
         monitor(c, a).andThen(m =>
           c.call.as[MonitorDetailDto](Method.GET, path("api", "monitors", m.id.toString))
         ).mapR { d =>
@@ -302,10 +238,7 @@ final class McpRoutes(
         }
     },
     Tool("test_monitor", "監視の設定を保存せずに今すぐ試す（相手に1回だけ問い合わせる）", schema(List("kind"), monitorProps*), readOnly = false) {
-      (
-        c,
-        a
-      ) =>
+      (c, a) =>
         c.call.as[ProbeResultDto](
           Method.POST,
           path("api", "monitors", "test"),
@@ -314,10 +247,7 @@ final class McpRoutes(
           .mapR(r => s"${if r.ok then "成功" else "失敗"}${r.latencyMs.fold("")(ms => s"（${ms}ms）")}: ${r.message}")
     },
     Tool("create_monitor", "監視を作る", schema(List("name", "kind"), monitorProps*), readOnly = false) {
-      (
-        c,
-        a
-      ) =>
+      (c, a) =>
         c.call.as[MonitorDto](Method.POST, path("api", "monitors"), Some(monitorJson(a, None))).mapR(m =>
           s"作りました: ${line(m)}\n$base/monitors/${m.id}"
         )
@@ -328,10 +258,7 @@ final class McpRoutes(
       schema(List("monitor"), ("monitor" -> str("監視の名前か ID")) :: monitorProps*),
       readOnly = false
     ) {
-      (
-        c,
-        a
-      ) =>
+      (c, a) =>
         monitor(c, a).andThen(m =>
           c.call.as[MonitorDto](
             Method.PUT,
@@ -341,10 +268,7 @@ final class McpRoutes(
         ).mapR(m => s"変えました: ${line(m)}")
     },
     Tool("pause_monitor", "監視を一時停止する", schema(List("monitor"), "monitor" -> str("監視の名前か ID")), readOnly = false) {
-      (
-        c,
-        a
-      ) =>
+      (c, a) =>
         monitor(c, a).andThen(m =>
           c.call(
             Method.PUT,
@@ -355,10 +279,7 @@ final class McpRoutes(
         )
     },
     Tool("resume_monitor", "一時停止した監視を再開する", schema(List("monitor"), "monitor" -> str("監視の名前か ID")), readOnly = false) {
-      (
-        c,
-        a
-      ) =>
+      (c, a) =>
         monitor(c, a).andThen(m =>
           c.call(
             Method.PUT,
@@ -374,10 +295,7 @@ final class McpRoutes(
       schema(List("monitor"), "monitor" -> str("監視の名前か ID")),
       readOnly = false
     ) {
-      (
-        c,
-        a
-      ) =>
+      (c, a) =>
         simple(
           c,
           a,
@@ -392,10 +310,7 @@ final class McpRoutes(
       readOnly = false,
       destructive = true
     ) {
-      (
-        c,
-        a
-      ) =>
+      (c, a) =>
         simple(c, a, m => c.call(Method.DELETE, path("api", "monitors", m.id.toString)), m => s"削除しました: ${m.name}")
     },
     Tool(
@@ -404,10 +319,7 @@ final class McpRoutes(
       schema(Nil, "open" -> bool("続いているものだけ"), "monitor" -> str("この監視だけ（名前か ID）")),
       readOnly = true
     ) {
-      (
-        c,
-        a
-      ) =>
+      (c, a) =>
         val target =
           if opt(a, "monitor").exists(_.nonEmpty) then monitor(c, a).mapR(m => Some(m.id)) else IO.pure(Right(None))
         target.andThen { id =>
@@ -423,10 +335,7 @@ final class McpRoutes(
         )
     },
     Tool("list_status_pages", "ステータスページの一覧（ゲストが見る URL）", schema(Nil), readOnly = true) {
-      (
-        c,
-        _
-      ) =>
+      (c, _) =>
         c.call.as[List[StatusPageDto]](Method.GET, path("api", "pages")).mapR(ps =>
           if ps.isEmpty then "ステータスページはありません"
           else
@@ -441,10 +350,7 @@ final class McpRoutes(
       schema(Nil),
       readOnly = true
     ) {
-      (
-        _,
-        _
-      ) =>
+      (_, _) =>
         IO.pure(Right(ApiCatalog.all.map(e => s"${e.method} ${e.path} — ${e.description}").mkString("\n")))
     },
     Tool(
@@ -458,10 +364,7 @@ final class McpRoutes(
       ),
       readOnly = false
     ) {
-      (
-        c,
-        a
-      ) =>
+      (c, a) =>
         (need(a, "method").map(_.toUpperCase), need(a, "path")).tupled match {
           case Left(e) => IO.pure(Left(e))
           case Right((m, p)) =>
@@ -484,29 +387,16 @@ final class McpRoutes(
 
   // ------------------------------------------------------------------ JSON-RPC
 
-  private def ok(
-    id: Json,
-    result: Json
-  ): Json = Json.obj("jsonrpc" -> "2.0".asJson, "id" -> id, "result" -> result)
-  private def rpcFail(
-    id: Json,
-    code: Int,
-    msg: String
-  ): Json =
+  private def ok(id: Json, result: Json): Json = Json.obj("jsonrpc" -> "2.0".asJson, "id" -> id, "result" -> result)
+  private def rpcFail(id: Json, code: Int, msg: String): Json =
     Json.obj("jsonrpc" -> "2.0".asJson, "id" -> id, "error" -> Json.obj("code" -> code.asJson, "message" -> msg.asJson))
-  private def toolResult(
-    r: Either[String, String]
-  ): Json =
+  private def toolResult(r: Either[String, String]): Json =
     Json.obj(
       "content" -> Json.arr(Json.obj("type" -> "text".asJson, "text" -> r.merge.asJson)),
       "isError" -> r.isLeft.asJson
     )
 
-  private def handle(
-    call: Caller,
-    p: Principal,
-    msg: Json
-  ): IO[Option[Json]] = {
+  private def handle(call: Caller, p: Principal, msg: Json): IO[Option[Json]] = {
     val c = msg.hcursor
     val params = c.downField("params")
     c.downField("id").focus match {
@@ -561,9 +451,7 @@ final class McpRoutes(
     case GET -> Root / "api" / "endpoints" => getEndpoints()
   }
 
-  private def postMcp(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMcp(req: Request[IO]): IO[Response[IO]] =
     req.headers.get[Authorization] match {
       case Some(auth @ Authorization(Credentials.Token(AuthScheme.Bearer, _))) =>
         sessions.fromRequest(Request[IO](Method.POST, Uri.unsafeFromString("/mcp")).putHeaders(auth)).flatMap {

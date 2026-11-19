@@ -13,21 +13,12 @@ object SecurityHeaders {
   val StrictCsp =
     "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
-  def apply(
-    routes: HttpRoutes[IO],
-    hsts: Boolean
-  ): HttpRoutes[IO] = routes.map(add(_, hsts))
+  def apply(routes: HttpRoutes[IO], hsts: Boolean): HttpRoutes[IO] = routes.map(add(_, hsts))
 
   /** アプリ全体（見つからない 404・内部エラーの 500 を含む）に付ける. */
-  def app(
-    app: HttpApp[IO],
-    hsts: Boolean
-  ): HttpApp[IO] = app.map(add(_, hsts))
+  def app(app: HttpApp[IO], hsts: Boolean): HttpApp[IO] = app.map(add(_, hsts))
 
-  private def add(
-    r: Response[IO],
-    hsts: Boolean
-  ): Response[IO] = {
+  private def add(r: Response[IO], hsts: Boolean): Response[IO] = {
     val fixed = List[Header.ToRaw](
       "X-Content-Type-Options" -> "nosniff",
       "X-Frame-Options" -> "DENY",

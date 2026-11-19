@@ -22,17 +22,16 @@ import sbirds.http.Errors
 
 import scala.concurrent.duration.*
 
-final case class AppConfig(
-  port: Int,
-  db: DbConfig,
-  oidc: Option[OidcConfig],
-  api: ApiConfig,
-  staticDir: Option[String],
-  appSecret: Option[String],
-  node: String,
-  concurrency: Int,
-  region: String,
-  bindHost: com.comcast.ip4s.Host)
+final case class AppConfig(port: Int,
+                           db: DbConfig,
+                           oidc: Option[OidcConfig],
+                           api: ApiConfig,
+                           staticDir: Option[String],
+                           appSecret: Option[String],
+                           node: String,
+                           concurrency: Int,
+                           region: String,
+                           bindHost: com.comcast.ip4s.Host)
 
 object Main extends IOApp.Simple {
 
@@ -116,10 +115,7 @@ object Main extends IOApp.Simple {
     } yield ()
 
   /** DB が使えるまで待ってからマイグレーションする. */
-  private def migrateWithRetry(
-    cfg: AppConfig,
-    attempt: Int = 1
-  ): IO[Int] =
+  private def migrateWithRetry(cfg: AppConfig, attempt: Int = 1): IO[Int] =
     Database.migrate(cfg.db).handleErrorWith { e =>
       if attempt >= 60 then IO.raiseError(e)
       else
@@ -127,9 +123,7 @@ object Main extends IOApp.Simple {
           IO.sleep(2.seconds) *> migrateWithRetry(cfg, attempt + 1)
     }
 
-  private def healthRoutes(
-    xa: doobie.Transactor[IO]
-  ): HttpRoutes[IO] = HttpRoutes.of[IO] {
+  private def healthRoutes(xa: doobie.Transactor[IO]): HttpRoutes[IO] = HttpRoutes.of[IO] {
     case GET -> Root / "healthz" =>
       sql"select 1".query[Int].unique.transact(xa).timeout(3.seconds).attempt.map {
         case Right(_) => TextResponse(Status.Ok, "ok")
@@ -138,12 +132,8 @@ object Main extends IOApp.Simple {
   }
 
   /** DB から定期的に読むメトリクス（skorimako のダッシュボード・アラート用）. */
-  private def gauges(
-    xa: doobie.Transactor[IO]
-  ): Resource[IO, Unit] = {
-    def q(
-      sqlText: doobie.Fragment
-    ): IO[Long] = sqlText.query[Long].unique.transact(xa)
+  private def gauges(xa: doobie.Transactor[IO]): Resource[IO, Unit] = {
+    def q(sqlText: doobie.Fragment): IO[Long] = sqlText.query[Long].unique.transact(xa)
     List(
       Metrics.gauge("skotare.users.total", "有効なユーザーの数")(q(sql"select count(*) from app_user where not disabled")),
       Metrics.gauge(
@@ -182,9 +172,7 @@ object Main extends IOApp.Simple {
   }
 
   /** 期限の切れたセッション・ログイン途中の状態を消す（1時間ごと）. */
-  private def purgeLoop(
-    users: UserStore
-  ): IO[Unit] =
+  private def purgeLoop(users: UserStore): IO[Unit] =
     (IO.sleep(1.minute) *>
       (IO.realTimeInstant.flatMap(users.purgeExpired)
         .handleErrorWith(e => Log.report(ErrorCode.SessionPurgeFailed, e.toString, e)) *>
@@ -199,10 +187,7 @@ object Main extends IOApp.Simple {
    * skorimako のブラウザの観測（RUM）が設定されていれば、その rum.js の読み込みと送信も許す（rum はそのオリジン）.
    * 画像はアイコン（IdP の画像は外部の https）のため広めにする. Service Worker・manifest は自分のサイトなので default-src で足りる.
    */
-  def spaCsp(
-    indexHtml: String,
-    rum: Option[String] = RumRoutes.origin
-  ): String = {
+  def spaCsp(indexHtml: String, rum: Option[String] = RumRoutes.origin): String = {
     val inline = "(?s)<script>(.*?)</script>".r.findAllMatchIn(indexHtml).map(m =>
       s"'sha256-${java.util.Base64.getEncoder.encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(m.group(1).getBytes("UTF-8")))}'"
     )
@@ -220,15 +205,10 @@ object Main extends IOApp.Simple {
   }
 
   /** ビルド済みの画面の配信. 存在しないパスは index.html（SPA）. */
-  private def spa(
-    dir: String
-  ): IO[HttpRoutes[IO]] =
+  private def spa(dir: String): IO[HttpRoutes[IO]] =
     IO.blocking(java.nio.file.Files.readString(java.nio.file.Path.of(dir, "index.html"))).map(spaRoutes(dir, _))
 
-  private def spaRoutes(
-    dir: String,
-    indexHtml: String
-  ): HttpRoutes[IO] = {
+  private def spaRoutes(dir: String, indexHtml: String): HttpRoutes[IO] = {
     val csp = spaCsp(indexHtml)
     val files = fileService[IO](FileService.Config(dir))
     val index = HttpRoutes.of[IO] {

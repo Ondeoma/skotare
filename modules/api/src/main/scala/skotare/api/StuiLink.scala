@@ -26,13 +26,12 @@ import scala.concurrent.duration.*
  * stui 側の OAUTH_CLIENTS に skotare を登録する（redirectUri は {PUBLIC_URL}/api/integrations/stui/callback、scopes は read・write）.
  * トークンは APP_SECRET の鍵で暗号化して保存する.
  */
-final class StuiLink(
-  cfg: Option[LinkService],
-  tokens: IntegrationTokenStore,
-  http: Client[IO],
-  box: Option[SecretBox],
-  publicUrl: String,
-  val sessions: SessionAuth) extends RouteSupport {
+final class StuiLink(cfg: Option[LinkService],
+                     tokens: IntegrationTokenStore,
+                     http: Client[IO],
+                     box: Option[SecretBox],
+                     publicUrl: String,
+                     val sessions: SessionAuth) extends RouteSupport {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
 
@@ -44,27 +43,19 @@ final class StuiLink(
     case req @ DELETE -> Root / "api" / "integrations" / "stui" / "connection" => deleteIntegrationsStuiConnection(req)
   }
 
-  private def getIntegrations(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getIntegrations(req: Request[IO]): IO[Response[IO]] =
     authed(req)(u =>
       cfg match {
         case None => Ok(List.empty[IntegrationDto])
         case Some(c) =>
           // 名前は sruru に登録した表示名（なければサービスの名前）
-          (connected(u.id), sessions.appNames(req)).flatMapN(
-            (
-              on,
-              names
-            ) =>
-              Ok(List(IntegrationDto(Provider, names.getOrElse(Provider, Provider), c.url, on)))
+          (connected(u.id), sessions.appNames(req)).flatMapN((on, names) =>
+            Ok(List(IntegrationDto(Provider, names.getOrElse(Provider, Provider), c.url, on)))
           )
       }
     )
 
-  private def getIntegrationsStuiChannels(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getIntegrationsStuiChannels(req: Request[IO]): IO[Response[IO]] =
     authed(req)(u =>
       channels(u.id).flatMap {
         case Right(cs) => Ok(cs.sortBy(_.name.toLowerCase))
@@ -72,9 +63,7 @@ final class StuiLink(
       }
     )
 
-  private def getIntegrationsStuiConnect(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getIntegrationsStuiConnect(req: Request[IO]): IO[Response[IO]] =
     interactive(req)(u =>
       (cfg, box) match {
         case (None, _) => err(ErrorCode.StuiNotConfigured)
@@ -101,9 +90,7 @@ final class StuiLink(
       }
     )
 
-  private def getIntegrationsStuiCallback(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getIntegrationsStuiCallback(req: Request[IO]): IO[Response[IO]] =
     interactive(req)(u =>
       (cfg, box, param(req, "state")) match {
         case (Some(c), Some(b), Some(state)) =>
@@ -139,9 +126,7 @@ final class StuiLink(
       }
     )
 
-  private def deleteIntegrationsStuiConnection(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def deleteIntegrationsStuiConnection(req: Request[IO]): IO[Response[IO]] =
     interactive(req)(u =>
       cfg.traverse_(c =>
         token(u.id).flatMap(_.traverse_ { t =>
@@ -158,41 +143,27 @@ final class StuiLink(
 
   private def redirectUri: String = s"${publicUrl.stripSuffix("/")}/api/integrations/stui/callback"
 
-  private def basic(
-    c: LinkService
-  ): Authorization = Authorization(BasicCredentials(c.clientId, c.clientSecret))
+  private def basic(c: LinkService): Authorization = Authorization(BasicCredentials(c.clientId, c.clientSecret))
 
-  private def bearer(
-    t: String
-  ): Authorization = Authorization(Credentials.Token(AuthScheme.Bearer, t))
+  private def bearer(t: String): Authorization = Authorization(Credentials.Token(AuthScheme.Bearer, t))
 
-  private def found(
-    to: String
-  ): IO[Response[IO]] =
+  private def found(to: String): IO[Response[IO]] =
     IO.pure(Response[IO](Status.Found).putHeaders(
       Location(Uri.fromString(to).getOrElse(Uri(path = Uri.Path.Root))),
       "Cache-Control" -> "no-store"
     ))
 
   /** 戻り先に結果を付ける（integration=stui&result=…）. */
-  private def back(
-    to: String,
-    result: String
-  ): IO[Response[IO]] =
+  private def back(to: String, result: String): IO[Response[IO]] =
     found(to + (if to.contains("?") then "&" else "?") + s"integration=stui&result=$result")
 
-  def token(
-    userId: UUID
-  ): IO[Option[String]] = tokens.token(userId, Provider).map(_.flatMap(t => box.flatMap(_.decrypt(t))))
+  def token(userId: UUID): IO[Option[String]] =
+    tokens.token(userId, Provider).map(_.flatMap(t => box.flatMap(_.decrypt(t))))
 
-  def connected(
-    userId: UUID
-  ): IO[Boolean] = token(userId).map(_.isDefined)
+  def connected(userId: UUID): IO[Boolean] = token(userId).map(_.isDefined)
 
   /** 本人のトークンで、通知先に選べるチャンネル（参加していて、アーカイブしていない公開・非公開のチャンネル）. */
-  def channels(
-    userId: UUID
-  ): IO[Either[String, List[StuiChannelDto]]] =
+  def channels(userId: UUID): IO[Either[String, List[StuiChannelDto]]] =
     (cfg, box) match {
       case (None, _) => IO.pure(Left("stui との連携が設定されていません"))
       case (_, None) => IO.pure(Left("stui と連携するには APP_SECRET を設定してください"))
@@ -213,22 +184,10 @@ final class StuiLink(
                   Right(cs.flatMap { j =>
                     val h = j.hcursor
                     (h.get[UUID]("id"), h.get[String]("name"), h.get[String]("kind")).tupled.toOption
-                      .filter(
-                        (
-                          _,
-                          _,
-                          k
-                        ) => k == "public" || k == "private"
-                      )
+                      .filter((_, _, k) => k == "public" || k == "private")
                       .filterNot(_ => h.get[Boolean]("archived").contains(true))
                       .filterNot(_ => h.get[Boolean]("member").contains(false))
-                      .map(
-                        (
-                          id,
-                          name,
-                          kind
-                        ) => StuiChannelDto(id, name, kind, h.get[String]("role").contains("admin"))
-                      )
+                      .map((id, name, kind) => StuiChannelDto(id, name, kind, h.get[String]("role").contains("admin")))
                   })
                 )
             }.timeout(15.seconds).handleError(_ => Left("stui に接続できませんでした"))
@@ -239,10 +198,7 @@ final class StuiLink(
    * 通知先「stui のチャンネル」へ送る（作った人のトークンで、ボット「skotare」として投稿する）.
    * 失敗は例外にする（行列が間隔を延ばして送り直す）. トークンが失効していたら、その人の連携を外す.
    */
-  def post(
-    n: NotifierRow,
-    text: String
-  ): IO[Unit] = {
+  def post(n: NotifierRow, text: String): IO[Unit] = {
     val fail = (m: String) => IO.raiseError[Unit](new IllegalStateException(m))
     (cfg, n.config.channelId, n.config.connectedBy) match {
       case (None, _, _) => fail("stui との連携が設定されていません（STUI_URL など）")
@@ -269,16 +225,9 @@ final class StuiLink(
    * 本人のトークンで、チャンネルに受信 Webhook を作る（チャンネルの管理者だけが作れる）. (Webhook の ID, 送る URL).
    * stui が返す URL は利用者向けの公開 URL なので、サーバーから呼ぶ URL（STUI_INTERNAL_URL）があれば置き換える.
    */
-  def createHook(
-    userId: UUID,
-    channelId: UUID,
-    name: String
-  ): IO[Either[String, (UUID, String)]] =
+  def createHook(userId: UUID, channelId: UUID, name: String): IO[Either[String, (UUID, String)]] =
     withToken(userId) {
-      (
-        c,
-        t
-      ) =>
+      (c, t) =>
         val body = Json.obj(
           "channelId" -> channelId.asJson,
           "name" -> s"skotare: $name".take(100).asJson,
@@ -295,11 +244,8 @@ final class StuiLink(
           else
             r.as[Json].map { j =>
               (j.hcursor.downField("hook").get[UUID]("id"), j.hcursor.get[String]("url")).tupled.toOption
-                .map(
-                  (
-                    id,
-                    url
-                  ) => id -> (if url.startsWith(c.url + "/") then c.apiUrl + url.drop(c.url.length) else url)
+                .map((id, url) =>
+                  id -> (if url.startsWith(c.url + "/") then c.apiUrl + url.drop(c.url.length) else url)
                 )
                 .toRight("stui の応答が正しくありません")
             }
@@ -307,27 +253,16 @@ final class StuiLink(
     }
 
   /** 作った受信 Webhook を消す（本人のトークンで. 消せなくても続ける）. */
-  def deleteHook(
-    userId: UUID,
-    hookId: UUID
-  ): IO[Unit] =
-    withToken(userId)(
-      (
-        c,
-        t
-      ) =>
-        http.run(Request[IO](
-          Method.DELETE,
-          Uri.unsafeFromString(s"${c.apiUrl}/api/hooks/incoming/$hookId")
-        ).putHeaders(bearer(t)))
-          .use(_ => IO.pure(Right(()))).timeout(10.seconds)
+  def deleteHook(userId: UUID, hookId: UUID): IO[Unit] =
+    withToken(userId)((c, t) =>
+      http.run(Request[IO](
+        Method.DELETE,
+        Uri.unsafeFromString(s"${c.apiUrl}/api/hooks/incoming/$hookId")
+      ).putHeaders(bearer(t)))
+        .use(_ => IO.pure(Right(()))).timeout(10.seconds)
     ).void.handleError(_ => ())
 
-  private def withToken[A](
-    userId: UUID
-  )(
-    f: (LinkService, String) => IO[Either[String, A]]
-  ): IO[Either[String, A]] =
+  private def withToken[A](userId: UUID)(f: (LinkService, String) => IO[Either[String, A]]): IO[Either[String, A]] =
     cfg.fold(IO.pure(Left("stui との連携が設定されていません")))(c =>
       token(userId).flatMap(_.fold(IO.pure(Left("stui と連携してください")))(t => f(c, t)))
     )

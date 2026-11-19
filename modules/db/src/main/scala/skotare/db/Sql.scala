@@ -7,9 +7,7 @@ import doobie.implicits.*
 object Sql {
 
   /** set a = 1, b = 2（空のリストは渡さないこと）. */
-  def set(
-    fs: List[Fragment]
-  ): Fragment = fr"set" ++ fs.reduce(_ ++ fr"," ++ _)
+  def set(fs: List[Fragment]): Fragment = fr"set" ++ fs.reduce(_ ++ fr"," ++ _)
 
   /** ノードが止まったとみなすまでの、心拍のない時間. */
   val AliveWindow: Fragment = fr"now() - interval '90 seconds'"
@@ -18,13 +16,9 @@ object Sql {
   val stale: Fragment = fr"mr.next_check_at < now() - make_interval(secs => greatest(m.interval_sec * 3, 120))"
 
   /** 拠点で動いているノードの数（region は拠点の名前の式）. */
-  def aliveNodes(
-    region: Fragment
-  ): Fragment =
+  def aliveNodes(region: Fragment): Fragment =
     fr"(select count(*)::int from node n where n.region =" ++ region ++ fr"and n.seen_at >" ++ AliveWindow ++ fr")"
 
   /** 部分一致の LIKE のパターン（% と _ はそのままの文字として探す）. */
-  def like(
-    q: String
-  ): String = "%" + q.trim.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+  def like(q: String): String = "%" + q.trim.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 }

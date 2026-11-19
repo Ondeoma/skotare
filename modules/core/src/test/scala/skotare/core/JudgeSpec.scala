@@ -35,10 +35,7 @@ class JudgeSpec extends munit.FunSuite {
 
   test("拠点の健全性: ほかの拠点も届かない監視先は、その拠点の異常に数えない") {
     val ms = List.fill(4)(UUID.randomUUID())
-    def votes(
-      a: String,
-      b: String
-    ) = ms.flatMap(m => List(Vote(m, "a", a, false), Vote(m, "b", b, false)))
+    def votes(a: String, b: String) = ms.flatMap(m => List(Vote(m, "a", a, false), Vote(m, "b", b, false)))
     // a だけが届かない
     assertEquals(
       regions(List("a" -> 1, "b" -> 1), votes(Down, Up)).map(_._1),

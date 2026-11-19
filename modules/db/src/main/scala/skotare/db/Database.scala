@@ -7,22 +7,14 @@ import doobie.hikari.HikariTransactor
 import doobie.implicits.*
 import org.flywaydb.core.Flyway
 
-final case class DbConfig(
-  url: String,
-  user: String,
-  password: String,
-  maxPoolSize: Int = 10)
+final case class DbConfig(url: String, user: String, password: String, maxPoolSize: Int = 10)
 
 object Database {
 
-  def migrate(
-    cfg: DbConfig
-  ): IO[Int] =
+  def migrate(cfg: DbConfig): IO[Int] =
     IO.blocking(Flyway.configure().dataSource(cfg.url, cfg.user, cfg.password).load().migrate().migrationsExecuted)
 
-  def transactor(
-    cfg: DbConfig
-  ): Resource[IO, HikariTransactor[IO]] = {
+  def transactor(cfg: DbConfig): Resource[IO, HikariTransactor[IO]] = {
     val hc = new HikariConfig()
     hc.setJdbcUrl(cfg.url)
     hc.setUsername(cfg.user)
@@ -39,9 +31,6 @@ object Database {
 }
 
 /** 各メソッドを1トランザクションで実行するストアの共通部分. */
-abstract class TxStore(
-  xa: Transactor[IO]) {
-  protected def tx[A](
-    c: ConnectionIO[A]
-  ): IO[A] = c.transact(xa)
+abstract class TxStore(xa: Transactor[IO]) {
+  protected def tx[A](c: ConnectionIO[A]): IO[A] = c.transact(xa)
 }
