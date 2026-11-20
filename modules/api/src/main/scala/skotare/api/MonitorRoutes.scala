@@ -23,7 +23,9 @@ final class MonitorRoutes(monitors: MonitorStore,
                           box: Option[SecretBox],
                           val sessions: SessionAuth,
                           announcer: Announcer,
-                          stui: Option[StuiLink] = None) extends RouteSupport {
+                          stui: Option[StuiLink] = None,
+                          probePolicy: sbirds.net.NetGuard.Policy = sbirds.net.NetGuard.Policy.publicOnly)
+  extends RouteSupport {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     // ログインしない人も見られる（公開しないページはログインした人だけ）
@@ -93,7 +95,12 @@ final class MonitorRoutes(monitors: MonitorStore,
     authed(req)(_ =>
       body[MonitorReq](req)(r =>
         valid(validMonitor(r))(m =>
-          Telemetry.span("monitor.test", "monitor.kind" -> m.kind)(Probe.run(m.kind, m.config, m.timeoutMs.millis))
+          Telemetry.span("monitor.test", "monitor.kind" -> m.kind)(Probe.run(
+            m.kind,
+            m.config,
+            m.timeoutMs.millis,
+            probePolicy
+          ))
             .flatMap(p => Ok(ProbeResultDto(p.ok, p.latencyMs, p.message)))
         )
       )

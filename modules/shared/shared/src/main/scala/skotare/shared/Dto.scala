@@ -11,15 +11,6 @@ import java.util.UUID
 /** 省いた項目は既定の値にする（API・MCP から必要な項目だけ送れるように）. */
 given Configuration = Configuration.default.withDefaults
 
-/**
- * ログインや連携の後に戻る先. 同じサイトのパスだけを通す（サーバーと画面で同じ確認をする）.
- * 「//evil」「/\\evil」や、ブラウザが読み飛ばすタブ・改行を挟んだ「/\t/evil」で別のサイトへ飛ばされないよう、使える文字を絞る.
- */
-object SafePath {
-  private val re = "^/(?![/\\\\])[A-Za-z0-9\\-._~!$&'()*+,;=:@%/?#]*$".r
-  def of(s: Option[String], default: String = "/"): String = s.map(_.trim).filter(re.matches).getOrElse(default)
-}
-
 /** stui は stui との連携（通知先にチャンネルを選ぶ）を設定しているか. */
 final case class ClientConfigDto(devLogin: Boolean, oidc: Boolean, version: String, stui: Boolean = false)
   derives Encoder.AsObject, ConfiguredDecoder

@@ -1,5 +1,6 @@
 package skotare.api
 
+import sbirds.shared.SafePath
 import cats.effect.*
 import cats.syntax.all.*
 import io.circe.Json

@@ -1,5 +1,6 @@
 package skotare.db
 
+import sbirds.db.*
 import cats.effect.*
 import cats.syntax.all.*
 import doobie.*
@@ -33,7 +34,7 @@ final class NodeStore(xa: Transactor[IO]) extends TxStore(xa) {
   )
 
   def list: IO[List[NodeDto]] = tx(
-    (fr"select name, version, started_at, seen_at, seen_at >" ++ Sql.AliveWindow ++ fr""", region from node
+    (fr"select name, version, started_at, seen_at, seen_at >" ++ NodeSql.AliveWindow ++ fr""", region from node
           where seen_at > now() - interval '1 day' order by region, name""").query[(
       String,
       String,
@@ -46,7 +47,7 @@ final class NodeStore(xa: Transactor[IO]) extends TxStore(xa) {
   )
 
   def regions: IO[List[RegionDto]] =
-    tx((fr"select r.name, r.health, r.reason, r.since," ++ Sql.aliveNodes(fr"r.name") ++
+    tx((fr"select r.name, r.health, r.reason, r.since," ++ NodeSql.aliveNodes(fr"r.name") ++
       fr"from region r order by r.name").query[(String, String, String, Instant, Int)].to[List].map(_.map(
       (n, h, r, s, c) => RegionDto(n, h, r, s.toString, c)
     )))

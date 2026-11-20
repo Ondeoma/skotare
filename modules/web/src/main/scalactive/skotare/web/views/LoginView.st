@@ -1,6 +1,6 @@
 <script lang="scala">
 import skotare.web.*
-import skotare.shared.SafePath
+import sbirds.shared.SafePath
 import org.scalajs.dom
 
 import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue

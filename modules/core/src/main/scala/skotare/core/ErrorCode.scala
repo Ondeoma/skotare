@@ -62,4 +62,5 @@ enum ErrorCode(val code: String, val status: Int, val message: String) extends s
   case MonitorCheckFailed extends ErrorCode("SKOTARE-9009", 500, "監視の確認に失敗しました")
   case NotificationSendFailed extends ErrorCode("SKOTARE-9010", 502, "通知を送れませんでした（間隔を延ばして送り直します）")
   case IndexHtmlMissing extends ErrorCode("SKOTARE-9011", 404, "画面のファイルが見つかりません")
+  case McpToolFailed extends ErrorCode("SKOTARE-9012", 500, "MCP のツールの実行に失敗しました")
 }

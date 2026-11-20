@@ -19,6 +19,9 @@ object Senders {
 
   /** 送れなかった理由（短く. 相手の応答の本文や内部の詳細は含めない）. */
   def describe(e: Throwable): String = e match {
+    case sbirds.net.NetGuard.Rejected.Internal(h) =>
+      s"内部のアドレス（$h）には送れません（管理者が NOTIFY_ALLOW_INTERNAL で許したホストだけ送れます）"
+    case r: sbirds.net.NetGuard.Rejected => r.message
     case _: java.util.concurrent.TimeoutException => "時間内に応答がありません"
     case _: java.net.ConnectException | _: java.nio.channels.UnresolvedAddressException => "接続できません"
     case _: IllegalArgumentException | _: IllegalStateException => Option(e.getMessage).getOrElse("設定が正しくありません")
@@ -26,7 +29,11 @@ object Senders {
   }
 }
 
-/** 通知先へ送る（stui のチャンネル・stui の受信 Webhook・skereru の送信 API・汎用の Webhook）. */
+/**
+ * 通知先へ送る（stui のチャンネル・stui の受信 Webhook・skereru の送信 API・汎用の Webhook）.
+ * http は、利用者が決めた URL へ送るクライアント（Main で sbirds.net.NetGuard.client から作る.
+ * 内部のアドレスは NOTIFY_ALLOW_INTERNAL で許したものだけ. リダイレクトは追わない）.
+ */
 final class Senders(http: Client[IO], box: Option[SecretBox], val publicUrl: String, stui: Option[StuiLink] = None) {
 
   private def secretOf(n: NotifierRow): Either[String, String] =

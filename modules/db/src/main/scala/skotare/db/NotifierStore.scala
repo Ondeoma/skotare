@@ -1,5 +1,6 @@
 package skotare.db
 
+import sbirds.db.*
 import cats.effect.*
 import cats.syntax.all.*
 import doobie.*
@@ -62,9 +63,11 @@ final class NotifierStore(xa: Transactor[IO]) extends TxStore(xa) {
       case 0 => none[NotifierRow].pure[ConnectionIO]
       case _ =>
         sql"delete from notifier_monitor where notifier_id = $nid".update.run *>
-          r.monitorIds.distinct.traverse_(m =>
-            sql"insert into notifier_monitor (notifier_id, monitor_id) select $nid, id from monitor where id = $m".update.run
-          ) *> findC(nid)
+          // 選んだ監視は1つの文でまとめて入れる（消えた監視の ID は入らない）
+          (if r.monitorIds.isEmpty then 0.pure[ConnectionIO]
+           else
+             sql"insert into notifier_monitor (notifier_id, monitor_id) select $nid, id from monitor where id = any(${r.monitorIds.distinct.toArray})".update.run) *>
+          findC(nid)
     }
   }
 

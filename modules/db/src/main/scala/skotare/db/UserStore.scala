@@ -1,5 +1,6 @@
 package skotare.db
 
+import sbirds.db.*
 import cats.effect.*
 import cats.syntax.all.*
 import doobie.*
@@ -31,8 +32,6 @@ object UserCols {
     s"(case when $a.avatar_version is not null then '/api/users/' || $a.id || '/avatar?v=' || $a.avatar_version else $a.avatar_url end)"
   )
 }
-
-final case class OAuthCode(clientId: String, redirectUri: String, userId: UUID, codeChallenge: String, scope: String)
 
 /** OAuth で発行するトークンの組（値はハッシュだけ）. scope は read か write. */
 final case class OAuthIssue(userId: UUID,
@@ -125,8 +124,13 @@ final class UserStore(xa: Transactor[IO]) extends TxStore(xa) {
   def deleteSession(hash: Array[Byte]): IO[Option[String]] =
     tx(sql"delete from session where token_hash = $hash returning id_token".query[Option[String]].option.map(_.flatten))
 
+  /**
+   * 期限の切れたセッション・ログイン途中の状態と、失効させてから30日たった API トークンを消す
+   * （OAuth のトークンは refresh のたびに前の組を失効させて新しい行を足すので、消さないと増え続ける）.
+   */
   def purgeExpired(now: Instant): IO[Unit] = tx(sql"delete from session where expires_at < $now".update.run *>
-    sql"delete from login_state where created_at < now() - interval '1 hour'".update.run.void)
+    sql"delete from login_state where created_at < now() - interval '1 hour'".update.run *>
+    sql"delete from api_token where revoked_at < now() - interval '30 days'".update.run.void)
 
   /** プッシュ通知を受け取る端末のある人（無効にした人は除く. 購読は sbirds-lib の PushStore の表）. */
   def pushSubscribers: IO[List[UUID]] =
@@ -183,17 +187,8 @@ final class UserStore(xa: Transactor[IO]) extends TxStore(xa) {
 
   // ---------------------------------------------------------------- OAuth の提供側（認可コード・連携のトークン）
 
-  def createCode(hash: Array[Byte], c: OAuthCode, expires: Instant): IO[Unit] = tx(
-    sql"""insert into oauth_code (code_hash, client_id, redirect_uri, user_id, code_challenge, scope, expires_at)
-          values ($hash, ${c.clientId}, ${c.redirectUri}, ${c.userId}, ${c.codeChallenge}, ${c.scope}, $expires)""".update.run *>
-      sql"delete from oauth_code where expires_at < now() - interval '1 hour'".update.run.void
-  )
-
-  /** 認可コードを使う（有効期限内で、まだ使っていないものだけ. 使ったら使用済みにする）. */
-  def consumeCode(hash: Array[Byte]): IO[Option[OAuthCode]] = tx(
-    sql"""update oauth_code set used_at = now() where code_hash = $hash and used_at is null and expires_at > now()
-          returning client_id, redirect_uri, user_id, code_challenge, scope""".query[OAuthCode].option
-  )
+  /** 認可コード（表 oauth_code）は sbirds.oauth のストアで扱う. */
+  val oauthCodes: sbirds.oauth.OAuthCodes = new sbirds.oauth.OAuthCodeStore(xa)
 
   private def insertGrant(g: OAuthIssue, granted: Instant, lastUsed: Option[Instant]): ConnectionIO[Unit] =
     sql"""insert into api_token (id, user_id, name, prefix, token_hash, scope, expires_at, last_used_at, oauth_client, refresh_hash, granted_at)

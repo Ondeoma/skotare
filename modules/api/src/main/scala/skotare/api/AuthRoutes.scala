@@ -1,18 +1,17 @@
 package skotare.api
 
+import sbirds.shared.SafePath
 import cats.effect.*
-import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
-import org.http4s.headers.Location
-import sbirds.auth.{Crypto, LoginDenied, OidcClient}
+import sbirds.auth.{Crypto, LoginResult, OidcClient}
 import skotare.auth.ApiTokens
 import skotare.db.*
 import skotare.shared.*
 import skotare.core.ErrorCode
-import sbirds.http.Errors
+import sbirds.http.{Errors, HttpParts, OidcLoginFlow}
 import sbirds.shared.AppError
 
 import java.time.Instant
@@ -39,59 +38,60 @@ final class AuthRoutes(oidc: Option[OidcClient], users: UserStore, val sessions:
     case req @ DELETE -> Root / "api" / "tokens" / UuidVar(id) => deleteToken(req, id)
   }
 
-  private def getAuthLogin(req: Request[IO]): IO[Response[IO]] = {
-    val back = SafePath.of(param(req, "returnTo"))
-    oidc match {
-      case Some(o) =>
-        val state = Crypto.randomToken(); val verifier = Crypto.randomToken(48); val nonce = Crypto.randomToken()
-        users.saveLoginState(state, verifier, nonce, back) *>
-          o.authorizationUri(state, verifier, nonce).flatMap(u =>
-            redirect(u.renderString, Some(loginCookie(state, 600)))
-          )
-      case None if cfg.devLogin => redirect(s"/login?returnTo=${java.net.URLEncoder.encode(back, "UTF-8")}")
-      case None => err(ErrorCode.OidcNotConfigured)
+  private def getAuthLogin(req: Request[IO]): IO[Response[IO]] = OidcLoginFlow.login(flow)(req)
+
+  private def getAuthCallback(req: Request[IO]): IO[Response[IO]] = OidcLoginFlow.callback(flow)(req)
+
+  /** OIDC のログインの流れ（sbirds.http.OidcLoginFlow）に差し込む、skotare の部分. */
+  private val flow = new OidcLoginFlow.Host[LoginResult] {
+    val idp = oidc.map(OidcLoginFlow.Idp(_))
+
+    /**
+     * ログインを始めたブラウザの印（state の SHA-256）. IdP から戻ったとき、同じブラウザかを確かめる
+     * （攻撃者が途中で止めたコールバックの URL を踏ませて、攻撃者のアカウントでログインさせる「ログイン CSRF」を防ぐ）.
+     */
+    val cookie = OidcLoginFlow.StateCookie("skotare_login", cfg.cookieSecure, maxAge = 600, hashed = true)
+    override def idpErrorParam: Boolean = true
+
+    def returnTo(req: Request[IO]): String = SafePath.of(param(req, "returnTo"))
+    def saveState(state: String, verifier: String, nonce: String, returnTo: String): IO[Unit] =
+      users.saveLoginState(state, verifier, nonce, returnTo)
+    def takeState(state: String): IO[Option[(String, String, String)]] = users.takeLoginState(state)
+    def redirect(to: String): IO[Response[IO]] = AuthRoutes.this.redirect(to)
+
+    def withoutIdp(req: Request[IO], back: String): IO[Response[IO]] =
+      if cfg.devLogin then AuthRoutes.this.redirect(s"/login?returnTo=${java.net.URLEncoder.encode(back, "UTF-8")}")
+      else err(ErrorCode.OidcNotConfigured)
+
+    def failed(req: Request[IO], f: OidcLoginFlow.Failure): IO[Response[IO]] = {
+      import OidcLoginFlow.Failure.*
+      f match {
+        // IdP からの説明は URL で差し替えられるので画面には出さず、ログにだけ残す
+        case IdpError(e, d) =>
+          loginFailed(req, ErrorCode.LoginRejectedByIdp, s"${e.take(100)} ${d.getOrElse("").take(300)}")
+        case BrowserMismatch => loginFailed(req, ErrorCode.LoginBrowserMismatch)
+        case Expired => loginFailed(req, ErrorCode.LoginExpired)
+        // 理由の詳細（検証に失敗した項目など）はログにだけ出す
+        case Denied(e) => loginFailed(req, ErrorCode.LoginDenied, e.getMessage, e.getMessage)
+        case Failed(e) => loginFailed(req, ErrorCode.LoginFailed, e.getMessage)
+        case NotConfigured => err(ErrorCode.OidcNotConfigured)
+        case ParamsMissing => err(ErrorCode.LoginCodeStateRequired)
+      }
+    }
+
+    def loggedIn(req: Request[IO], res: LoginResult, back: String): IO[Response[IO]] = {
+      val id = res.identity
+      users.upsert(
+        id.sub,
+        id.name,
+        id.email,
+        id.picture.filter(p => p.startsWith("https://") || p.startsWith("http://"))
+      ).flatMap { u =>
+        if u.disabled then loginFailed(req, ErrorCode.UserDisabled)
+        else AuthRoutes.this.loggedIn(u, Some(res.idToken)).flatMap(c => AuthRoutes.this.redirect(back, Some(c)))
+      }
     }
   }
-
-  private def getAuthCallback(req: Request[IO]): IO[Response[IO]] =
-    (oidc, param(req, "code"), param(req, "state"), param(req, "error")) match {
-      case (_, _, _, Some(e)) =>
-        // IdP からの説明は URL で差し替えられるので画面には出さず、ログにだけ残す
-        loginFailed(
-          req,
-          ErrorCode.LoginRejectedByIdp,
-          s"${e.take(100)} ${param(req, "error_description").getOrElse("").take(300)}"
-        )
-      case (Some(_), Some(_), Some(state), None) if !sameBrowser(req, state) =>
-        loginFailed(req, ErrorCode.LoginBrowserMismatch)
-      case (Some(o), Some(code), Some(state), None) =>
-        users.takeLoginState(state).flatMap {
-          case None => loginFailed(req, ErrorCode.LoginExpired)
-          case Some((verifier, nonce, back)) =>
-            o.authenticate(code, verifier, nonce, Instant.now()).attempt.flatMap {
-              // 理由の詳細（検証に失敗した項目など）はログにだけ出す
-              case Left(e: LoginDenied) => loginFailed(req, ErrorCode.LoginDenied, e.getMessage, e.getMessage)
-              case Left(e) =>
-                loginFailed(req, ErrorCode.LoginFailed, e.getMessage)
-              case Right(res) =>
-                val id = res.identity
-                users.upsert(
-                  id.sub,
-                  id.name,
-                  id.email,
-                  id.picture.filter(p => p.startsWith("https://") || p.startsWith("http://"))
-                ).flatMap { u =>
-                  if u.disabled then loginFailed(req, ErrorCode.UserDisabled)
-                  else
-                    loggedIn(u, Some(res.idToken)).flatMap(c =>
-                      redirect(back, Some(c)).map(_.addCookie(loginCookie("", 0)))
-                    )
-                }
-            }
-        }
-      case (None, _, _, _) => err(ErrorCode.OidcNotConfigured)
-      case _ => err(ErrorCode.LoginCodeStateRequired)
-    }
 
   private def rejectLogoutNotFromScreen(req: Request[IO]): IO[Response[IO]] =
     err(ErrorCode.LogoutNotFromScreen)
@@ -99,8 +99,8 @@ final class AuthRoutes(oidc: Option[OidcClient], users: UserStore, val sessions:
   private def postAuthLogout(req: Request[IO]): IO[Response[IO]] =
     sessions.revoke(req).flatMap {
       (idToken, c) =>
-        oidc.traverse(_.logoutUri(idToken, cfg.publicUrl + "/")).map(_.flatten).flatMap { idp =>
-          Ok(Json.obj("redirect" -> idp.fold("/login?loggedOut=1")(_.renderString).asJson)).map(_.addCookie(c))
+        OidcLoginFlow.logoutRedirect(oidc, idToken, cfg.publicUrl + "/", "/login?loggedOut=1").flatMap { to =>
+          Ok(Json.obj("redirect" -> to.asJson)).map(_.addCookie(c))
         }
     }
 
@@ -196,32 +196,9 @@ final class AuthRoutes(oidc: Option[OidcClient], users: UserStore, val sessions:
   private def deleteToken(req: Request[IO], id: UUID): IO[Response[IO]] =
     interactive(req)(u => users.revokeToken(u.id, id).ifM(NoContent(), err(ErrorCode.ApiTokenNotFound)))
 
-  private def redirect(to: String, cookie: Option[ResponseCookie] = None): IO[Response[IO]] = {
-    // SafePath は % を通すので、URL として読めないものは / に戻す
-    val r = Response[IO](Status.Found).putHeaders(
-      Location(Uri.fromString(to).getOrElse(Uri(path = Uri.Path.Root))),
-      "Cache-Control" -> "no-store"
-    )
-    IO.pure(cookie.fold(r)(r.addCookie))
-  }
-
-  /**
-   * ログインを始めたブラウザの印（state の SHA-256）. IdP から戻ったとき、同じブラウザかを確かめる
-   * （攻撃者が途中で止めたコールバックの URL を踏ませて、攻撃者のアカウントでログインさせる「ログイン CSRF」を防ぐ）.
-   */
-  private val LoginCookie = "skotare_login"
-  private def loginCookie(state: String, maxAge: Long) =
-    SessionAuth.cookie(
-      cfg,
-      LoginCookie,
-      if state.isEmpty then "" else Crypto.hex(Crypto.sha256(state)),
-      maxAge,
-      "/auth"
-    )
-  private def sameBrowser(req: Request[IO], state: String): Boolean =
-    req.cookies.find(_.name == LoginCookie).exists(c =>
-      java.security.MessageDigest.isEqual(c.content.getBytes, Crypto.hex(Crypto.sha256(state)).getBytes)
-    )
+  // SafePath は % を通すので、URL として読めないものは / に戻す
+  override protected def redirect(to: String, cookie: Option[ResponseCookie] = None): IO[Response[IO]] =
+    IO.pure(HttpParts.redirect(to, cookie, noStore = true, lenient = true))
 
   /** 変更した後の自分の情報. */
   private def me(u: User): IO[Response[IO]] = users.find(u.id).flatMap(x => Ok(x.getOrElse(u).me))

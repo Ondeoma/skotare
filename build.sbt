@@ -25,10 +25,14 @@ lazy val libSharedJS = ProjectRef(sbirdsLib, "sharedJS")
 lazy val libObserve = ProjectRef(sbirdsLib, "observe")
 lazy val libAuth = ProjectRef(sbirdsLib, "auth")
 lazy val libHttp = ProjectRef(sbirdsLib, "http")
+lazy val libMcp = ProjectRef(sbirdsLib, "mcp")
 lazy val libPush = ProjectRef(sbirdsLib, "push")
 lazy val libWeb = ProjectRef(sbirdsLib, "web")
 lazy val libLinks = ProjectRef(sbirdsLib, "links")
+lazy val libDb = ProjectRef(sbirdsLib, "db")
+lazy val libOauth = ProjectRef(sbirdsLib, "oauth")
 lazy val libDevidp = ProjectRef(sbirdsLib, "devidp")
+lazy val libNet = ProjectRef(sbirdsLib, "net")
 
 // http4s のサーバー側（ルートの DSL と JSON）
 val http4sServer = Seq(
@@ -70,14 +74,14 @@ lazy val web = (project in file("modules/web"))
     )
   )
 
-// 監視の確かめ方（HTTP(S)・TCP・DNS・PING. JDK の機能だけで行う）
+// 監視の確かめ方（HTTP(S)・TCP・DNS・PING. JDK の機能で行う. 宛先の確認は sbirds-lib の net）
 lazy val core = (project in file("modules/core"))
-  .dependsOn(shared.jvm)
+  .dependsOn(shared.jvm, libNet)
   .settings(commonTest)
   .settings(libraryDependencies += "org.typelevel" %% "cats-effect" % ceV)
 
 lazy val db = (project in file("modules/db"))
-  .dependsOn(core, libObserve)
+  .dependsOn(core, libObserve, libDb, libOauth)
   .settings(commonTest)
   .settings(
     libraryDependencies ++= Seq(
@@ -106,7 +110,7 @@ lazy val devidp = (project in file("modules/devidp"))
   )
 
 lazy val api = (project in file("modules/api"))
-  .dependsOn(core, db, auth, shared.jvm, libObserve, libHttp, libPush, libLinks, libDevidp % "test->compile")
+  .dependsOn(core, db, auth, shared.jvm, libObserve, libHttp, libMcp, libPush, libLinks, libDevidp % "test->compile", libOauth)
   .settings(commonTest)
   .settings(
     libraryDependencies ++= http4sServer

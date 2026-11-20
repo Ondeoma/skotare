@@ -1,5 +1,6 @@
 package skotare.db
 
+import sbirds.db.*
 import cats.effect.*
 import cats.syntax.all.*
 import doobie.*
@@ -277,7 +278,7 @@ final class MonitorStore(xa: Transactor[IO]) extends TxStore(xa) {
     def votes: Boolean = ok && !stale
   }
 
-  private val stale: Fragment = Sql.stale
+  private val stale: Fragment = NodeSql.stale
 
   /** 監視の行をロックして読む（for no key update: 結果・障害の挿入（外部キー）は止めない. 拠点どうしの結果は1つずつ順に合わせる）. */
   private def lockMonitorC(id: UUID): ConnectionIO[Option[MonRow]] =
@@ -416,7 +417,8 @@ final class MonitorStore(xa: Transactor[IO]) extends TxStore(xa) {
       case true =>
         for {
           regions <-
-          (fr"select r.name, r.health, r.reason," ++ Sql.aliveNodes(fr"r.name") ++ fr"from region r order by r.name")
+          (fr"select r.name, r.health, r.reason," ++ NodeSql.aliveNodes(fr"r.name") ++
+            fr"from region r order by r.name")
             .query[(String, String, String, Int)].to[List]
           states <-
           (fr"select mr.monitor_id, mr.region, mr.status, m.canary, m.status, m.confirm_regions," ++ stale ++

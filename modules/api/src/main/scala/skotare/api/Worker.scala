@@ -9,12 +9,16 @@ import sbirds.observe.{Log, Metrics, Telemetry}
 
 import scala.concurrent.duration.*
 
-/** node はこのノードの名前（確認の結果に残す）、region は拠点の名前、concurrency は同時に確かめる数. */
+/**
+ * node はこのノードの名前（確認の結果に残す）、region は拠点の名前、concurrency は同時に確かめる数.
+ * probePolicy は監視でつないでよい宛先（既定は外のアドレスだけ. PROBE_ALLOW_INTERNAL）.
+ */
 final case class WorkerConfig(node: String,
                               publicUrl: String,
                               version: String,
                               concurrency: Int = 16,
-                              region: String = "default")
+                              region: String = "default",
+                              probePolicy: sbirds.net.NetGuard.Policy = sbirds.net.NetGuard.Policy.publicOnly)
 
 /**
  * 監視を回す（どのノードでも同じものを動かす. 同じ拠点のノードは DB で取り合うので、台数を増やすと分担する. 拠点ごとに全ての監視を確かめる）.
@@ -66,7 +70,7 @@ final class Worker(monitors: MonitorStore,
   def check(m: DueMonitor): IO[Unit] =
     Telemetry.span("monitor.check", "monitor.kind" -> m.kind, "monitor.name" -> m.name, "region" -> m.region) {
       for {
-        r <- Probe.run(m.kind, m.config, m.timeoutMs.millis)
+        r <- Probe.run(m.kind, m.config, m.timeoutMs.millis, cfg.probePolicy)
         at <- IO.realTimeInstant
         _ <- Metrics.count(
           "skotare.checks",

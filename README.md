@@ -114,10 +114,12 @@ DB はすべての拠点から届く場所に置き、冗長にします（DB �
 | `NODE_NAME` | このノードの名前（既定 ホスト名） |
 | `REGION` | このノードの拠点の名前（既定 `default`。同じ場所のノードは同じ名前にする。例 `tokyo`・`osaka`） |
 | `CHECK_CONCURRENCY` | 1台で同時に確かめる数（既定 16、1〜256） |
+| `PROBE_ALLOW_INTERNAL` | 監視してよい内部のアドレス（ホスト名・IP アドレス・CIDR をカンマか空白で区切る。例 `10.1.0.0/16,intra.example.internal`）。既定は空で、内部のアドレス（ループバック・プライベート・リンクローカル〈クラウドのメタデータ〉など）は監視できない。ホスト名は完全一致で、名前を引いた結果は確かめない |
+| `NOTIFY_ALLOW_INTERNAL` | 通知（Webhook・stui の受信 Webhook・skereru の URL）を送ってよい内部のアドレス（書き方は `PROBE_ALLOW_INTERNAL` と同じ）。既定は空。`STUI_URL`・`STUI_INTERNAL_URL` のホストは書かなくても許す |
 | `APP_SECRET` | 通知先の秘密の値（stui の Webhook の URL・skereru の APIキー）を暗号化する鍵（16文字以上。全ノードで同じ値にする。通知先を使うときは必須） |
 | `STUI_URL`・`STUI_CLIENT_ID`・`STUI_CLIENT_SECRET` | stui との連携（通知先に stui のチャンネルを選ぶ）。stui の `OAUTH_CLIENTS` に skotare を登録し（`redirectUri` は `{PUBLIC_URL}/api/integrations/stui/callback`、`scopes` は `["read","write"]`）、その id・secret を入れる。`STUI_INTERNAL_URL` はサーバーから呼ぶ URL（省くと `STUI_URL`） |
 | `OAUTH_CLIENTS` | skotare を利用者の権限で使うサービス（OAuth のクライアント）。`[{"id":"skakapo","secret":"…（16文字以上）","redirectUri":"https://…/api/connections/callback","name":"skakapo","scopes":["read","write"]}]`（`scopes` を省くと `read` だけ） |
-| `RATE_LIMIT_AUTH` / `RATE_LIMIT_PUBLIC` | IP ごとの1分あたりの回数の上限。ログイン・OAuth の認可（`/auth/…`・`/oauth/…`、既定 20）とステータスページ（`/api/public/…`、既定 120）。0 で制限しない |
+| `RATE_LIMIT_AUTH` / `RATE_LIMIT_PUBLIC` | IP ごとの1分あたりの回数の上限。ログインと OAuth の認可の画面（`/auth/…`・`/oauth/authorize`、既定 20）と、OAuth のトークンの発行・失効（`/oauth/token`・`/oauth/revoke`）・ステータスページ（`/api/public/…`）（既定 120）。0 で制限しない |
 | `TRUSTED_PROXIES` | リバースプロキシの IP か CIDR（カンマ区切り）。そこから来た要求だけ `X-Forwarded-For` から利用者の IP を読む |
 | `STATIC_DIR` | ビルド済みの画面（`dist/static`） |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` | ログ・メトリクス・トレースの送り先（skorimako の URL と `Authorization=Bearer sko_…`（ingest のキー））。未設定なら送らない |
@@ -149,7 +151,10 @@ skotare は、同じ技術で作っている兄弟プロジェクト（[stui](ht
 
 ## セキュリティ
 
-- 監視は、ログインした人が指定した相手に、skotare のサーバーから問い合わせます（社内のサーバーも監視できるように、宛先は制限しません）。
+- 監視（HTTP・TCP・PING・DNS のサーバー）と通知は、ログインした人が指定した相手に、skotare のサーバーからつなぎます。
+  内部のアドレス（ループバック・プライベート・リンクローカル〈クラウドのメタデータ〉など）へは、既定ではつなぎません。
+  社内のサーバーを監視する・社内へ通知するときは、管理者が `PROBE_ALLOW_INTERNAL`・`NOTIFY_ALLOW_INTERNAL` に相手（ホスト名・CIDR）を書きます。
+  名前を引いた結果のすべてのアドレスで確かめ、HTTP のリダイレクトは行き先を1回ごとに確かめます（5回まで）。通知はリダイレクトを追いません。
   ログインできる人は `OIDC_ALLOWED_GROUPS` で絞ってください（未設定では起動しません。絞らないときは `OIDC_ALLOW_ANY_USER=true` を明示）
 - 一覧・通知・ログ・プッシュ通知に出す監視先の URL からは、利用者名・パスワードとクエリを除きます
 - 無効にしたユーザーと、ログアウトした端末にはプッシュ通知を送りません

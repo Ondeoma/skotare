@@ -2,6 +2,7 @@ package skotare.api
 
 import cats.effect.*
 import org.http4s.*
+import sbirds.http.RateLimitConfig
 import skotare.db.*
 import skotare.shared.*
 
@@ -31,7 +32,8 @@ final case class LinkService(provider: String,
 }
 
 /** skotare を利用者の権限で使う外部のサービス（OAuth のクライアント. 環境変数 OAUTH_CLIENTS）. scopes はこのクライアントに許すスコープ. */
-final case class OAuthClient(id: String, secret: String, redirectUri: String, name: String, scopes: List[String])
+type OAuthClient = sbirds.oauth.OAuthClient
+val OAuthClient = sbirds.oauth.OAuthClient
 
 /** HTML に埋め込む文字のエスケープ. */
 object Html {

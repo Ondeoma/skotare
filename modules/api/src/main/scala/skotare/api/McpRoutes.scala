@@ -2,13 +2,14 @@ package skotare.api
 
 import cats.effect.*
 import cats.syntax.all.*
-import io.circe.{ACursor, Decoder, Json}
-import io.circe.parser.parse
+import io.circe.{ACursor, Json}
 import io.circe.syntax.*
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.Http4sDsl
-import org.http4s.headers.{`WWW-Authenticate`, Allow, Authorization}
+import org.http4s.headers.Authorization
+import sbirds.mcp.{McpCaller, McpServer, McpTool}
+import sbirds.mcp.McpSchema.{bool, int, obj, schema, str}
 import sbirds.http.Errors
 import skotare.core.ErrorCode
 import skotare.shared.*
@@ -21,61 +22,30 @@ final class McpRoutes(api: HttpRoutes[IO], sessions: SessionAuth, publicUrl: Str
   extends Http4sDsl[IO] {
 
   private val base = publicUrl.stripSuffix("/")
-  private val Versions = List("2025-06-18", "2025-03-26", "2024-11-05")
 
   // ------------------------------------------------------------------ REST API の内部呼び出し
 
-  private final class Caller(auth: Authorization) {
-    def apply(method: Method, uri: Uri, body: Option[Json] = None): IO[Either[String, Json]] = {
-      val req0 = Request[IO](method, uri).putHeaders(auth)
-      val req = body.fold(req0)(req0.withEntity(_))
-      api.run(req).value.flatMap {
-        case None => IO.pure(Left("404 見つかりません"))
-        case Some(r) =>
-          r.bodyText.compile.string.map { s =>
-            val j = if s.isEmpty then Json.Null else parse(s).getOrElse(Json.fromString(s))
-            if r.status.isSuccess then Right(j)
-            else Left(s"${r.status.code} ${j.hcursor.get[String]("error").getOrElse(r.status.reason)}")
-          }
-      }
-    }
-
-    def as[A: Decoder](method: Method, uri: Uri, body: Option[Json] = None): IO[Either[String, A]] =
-      apply(method, uri, body).map(_.flatMap(_.as[A].left.map(e => s"応答を読めません: ${e.getMessage}")))
-  }
-
-  private def path(segments: String*): Uri =
-    Uri(path = Uri.Path(segments.toVector.map(Uri.Path.Segment(_)), absolute = true))
+  private type Caller = McpCaller
+  private def path(segments: String*): Uri = McpCaller.path(segments*)
 
   private final case class Ctx(call: Caller, me: MeDto)
 
   // ------------------------------------------------------------------ 引数
 
-  private type Result = IO[Either[String, String]]
+  private type Result = McpTool.Result
+  private type Tool = McpTool[Ctx]
 
-  private final case class Tool(name: String,
-                                description: String,
-                                schema: Json,
-                                readOnly: Boolean,
-                                destructive: Boolean = false)(val run: (Ctx, ACursor) => Result) {
-    def json: Json = Json.obj(
-      "name" -> name.asJson,
-      "description" -> description.asJson,
-      "inputSchema" -> schema,
-      "annotations" -> Json.obj(
-        "readOnlyHint" -> readOnly.asJson,
-        "destructiveHint" -> destructive.asJson,
-        "openWorldHint" -> (name.contains("test") || name == "check_now").asJson
-      )
-    )
-  }
+  /** 外へ確かめに行くツール（test_monitor・check_now など）は openWorldHint を付ける. */
+  private def Tool(name: String, description: String, schema: Json, readOnly: Boolean, destructive: Boolean = false)(
+    run: (Ctx, ACursor) => Result): Tool = McpTool(
+    name,
+    description,
+    schema,
+    readOnly,
+    destructive,
+    openWorld = name.contains("test") || name == "check_now"
+  )(run)
 
-  private def schema(required: List[String], props: (String, Json)*): Json =
-    Json.obj("type" -> "object".asJson, "properties" -> Json.obj(props*), "required" -> required.asJson)
-  private def str(d: String): Json = Json.obj("type" -> "string".asJson, "description" -> d.asJson)
-  private def int(d: String): Json = Json.obj("type" -> "integer".asJson, "description" -> d.asJson)
-  private def bool(d: String): Json = Json.obj("type" -> "boolean".asJson, "description" -> d.asJson)
-  private def obj(d: String): Json = Json.obj("type" -> "object".asJson, "description" -> d.asJson)
   private def oneOf(d: String, vs: String*): Json =
     Json.obj("type" -> "string".asJson, "enum" -> vs.toList.asJson, "description" -> d.asJson)
 
@@ -383,103 +353,30 @@ final class McpRoutes(api: HttpRoutes[IO], sessions: SessionAuth, publicUrl: Str
     }
   )
 
-  private val byName = tools.map(t => t.name -> t).toMap
-
-  // ------------------------------------------------------------------ JSON-RPC
-
-  private def ok(id: Json, result: Json): Json = Json.obj("jsonrpc" -> "2.0".asJson, "id" -> id, "result" -> result)
-  private def rpcFail(id: Json, code: Int, msg: String): Json =
-    Json.obj("jsonrpc" -> "2.0".asJson, "id" -> id, "error" -> Json.obj("code" -> code.asJson, "message" -> msg.asJson))
-  private def toolResult(r: Either[String, String]): Json =
-    Json.obj(
-      "content" -> Json.arr(Json.obj("type" -> "text".asJson, "text" -> r.merge.asJson)),
-      "isError" -> r.isLeft.asJson
-    )
-
-  private def handle(call: Caller, p: Principal, msg: Json): IO[Option[Json]] = {
-    val c = msg.hcursor
-    val params = c.downField("params")
-    c.downField("id").focus match {
-      case None => IO.pure(None) // 通知（notifications/initialized など）には返さない
-      case Some(id) =>
-        c.get[String]("method").getOrElse("") match {
-          case "initialize" =>
-            val asked = params.get[String]("protocolVersion").toOption
-            IO.pure(Some(ok(
-              id,
-              Json.obj(
-                "protocolVersion" -> asked.filter(Versions.contains).getOrElse(Versions.head).asJson,
-                "capabilities" -> Json.obj("tools" -> Json.obj("listChanged" -> false.asJson)),
-                "serverInfo" -> Json.obj("name" -> "skotare".asJson, "version" -> version.asJson),
-                "instructions" ->
-                  ("skotare（外部監視）の監視・障害・ステータスページを読み書きするツールです。全体の様子は get_status、監視は list_monitors で探し、" +
-                    "名前か ID で get_monitor・update_monitor・pause_monitor・resume_monitor・check_now を呼びます。新しい監視は test_monitor で設定を試してから create_monitor で作れます。" +
-                    "専用のツールがない操作（通知先・ステータスページの編集）は list_api_endpoints で REST API を調べ、call_api で行えます。" +
-                    (if p.canWrite then "" else "このトークンは参照のみなので、変更するツールは使えません。")).asJson
-              )
-            )))
-          case "ping" => IO.pure(Some(ok(id, Json.obj())))
-          case "tools/list" =>
-            IO.pure(Some(ok(id, Json.obj("tools" -> tools.filter(t => p.canWrite || t.readOnly).map(_.json).asJson))))
-          case "tools/call" =>
-            val name = params.get[String]("name").getOrElse("")
-            byName.get(name) match {
-              case None => IO.pure(Some(rpcFail(id, -32602, s"unknown tool: $name")))
-              case Some(t) if !p.canWrite && !t.readOnly =>
-                IO.pure(Some(ok(id, toolResult(Left("参照のみの API トークンでは変更できません")))))
-              case Some(t) =>
-                val args = params.downField("arguments").focus.filter(_.isObject).getOrElse(Json.obj()).hcursor
-                t.run(Ctx(call, p.user.me), args).handleError(e => Left(s"内部エラー: ${e.getMessage}")).map(r =>
-                  Some(ok(id, toolResult(r)))
-                )
-            }
-          case "resources/list" => IO.pure(Some(ok(id, Json.obj("resources" -> Json.arr()))))
-          case "prompts/list" => IO.pure(Some(ok(id, Json.obj("prompts" -> Json.arr()))))
-          case other => IO.pure(Some(rpcFail(id, -32601, s"method not found: $other")))
-        }
-    }
-  }
-
-  private val MaxBatch = 20
-
-  private def unauthorized: IO[Response[IO]] =
-    Errors.respond(ErrorCode.ApiTokenRequired).map(_.putHeaders(`WWW-Authenticate`(Challenge("Bearer", "skotare"))))
-
-  val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ POST -> Root / "mcp" => postMcp(req)
-    case (GET | DELETE) -> Root / "mcp" => mcpMethodNotAllowed()
+  // POST /mcp（JSON-RPC）と GET・DELETE /mcp（405）は sbirds.mcp.McpServer
+  lazy val routes: HttpRoutes[IO] = McpServer.routes(host) <+> HttpRoutes.of[IO] {
     case GET -> Root / "api" / "endpoints" => getEndpoints()
   }
-
-  private def postMcp(req: Request[IO]): IO[Response[IO]] =
-    req.headers.get[Authorization] match {
-      case Some(auth @ Authorization(Credentials.Token(AuthScheme.Bearer, _))) =>
-        sessions.fromRequest(Request[IO](Method.POST, Uri.unsafeFromString("/mcp")).putHeaders(auth)).flatMap {
-          case None => unauthorized
-          case Some(p) =>
-            val call = Caller(auth)
-            req.as[Json].attempt.flatMap {
-              case Left(_) => BadRequest(rpcFail(Json.Null, -32700, "parse error"))
-              case Right(j) =>
-                j.asArray match {
-                  case Some(batch) if batch.size > MaxBatch =>
-                    BadRequest(rpcFail(Json.Null, -32600, s"一度に送れる要求は ${MaxBatch} 件までです"))
-                  case Some(batch) =>
-                    batch.toList.traverse(handle(call, p, _)).map(_.flatten).flatMap(rs =>
-                      if rs.isEmpty then Accepted() else Ok(rs.asJson)
-                    )
-                  case None => handle(call, p, j).flatMap(_.fold(Accepted())(Ok(_)))
-                }
-            }
-        }
-      case _ => unauthorized
-    }
-
-  private def mcpMethodNotAllowed(): IO[Response[IO]] =
-    MethodNotAllowed(Allow(Method.POST))
 
   private def getEndpoints(): IO[Response[IO]] =
     Ok(ApiCatalog.all.map(e =>
       Json.obj("method" -> e.method.asJson, "path" -> e.path.asJson, "description" -> e.description.asJson)
     ))
+
+  // ------------------------------------------------------------------ MCP の枠（sbirds.mcp.McpServer）に差し込む、skotare の部分
+
+  private lazy val host = new McpServer.Host[Principal, Ctx] {
+    val settings = McpServer.Settings("skotare", toolFailed = ErrorCode.McpToolFailed, version = version)
+    val tools = McpRoutes.this.tools
+    def session(req: Request[IO], auth: Authorization) =
+      sessions.fromRequest(Request[IO](Method.POST, Uri.unsafeFromString("/mcp")).putHeaders(auth))
+    def unauthorized = Errors.respond(ErrorCode.ApiTokenRequired)
+    def context(req: Request[IO], auth: Authorization, p: Principal) = Ctx(new McpCaller(api, auth), p.user.me)
+    def canWrite(p: Principal) = p.canWrite
+    def instructions(p: Principal) =
+      ("skotare（外部監視）の監視・障害・ステータスページを読み書きするツールです。全体の様子は get_status、監視は list_monitors で探し、" +
+        "名前か ID で get_monitor・update_monitor・pause_monitor・resume_monitor・check_now を呼びます。新しい監視は test_monitor で設定を試してから create_monitor で作れます。" +
+        "専用のツールがない操作（通知先・ステータスページの編集）は list_api_endpoints で REST API を調べ、call_api で行えます。" +
+        (if p.canWrite then "" else "このトークンは参照のみなので、変更するツールは使えません。"))
+  }
 }

@@ -1,5 +1,7 @@
 package skotare.api
 
+import sbirds.shared.SafePath
+import sbirds.db.*
 import cats.effect.*
 import cats.syntax.all.*
 import com.comcast.ip4s.*
@@ -40,6 +42,9 @@ class FlowSpec extends munit.CatsEffectSuite {
     4
   )
   private val issuer = "http://localhost:9999"
+
+  /** テストの監視の相手は手元（127.0.0.1）なので、そこだけ許す（本番の PROBE_ALLOW_INTERNAL に当たる）. */
+  private val loopback = sbirds.net.NetGuard.Policy.allowList(List("127.0.0.1")).toOption.get
   private val agentCb = "http://localhost:5199/api/connections/callback"
   private val apiCfg = ApiConfig(
     cookieSecure = false,
@@ -185,13 +190,20 @@ class FlowSpec extends munit.CatsEffectSuite {
       val senders = new Senders(siblings, box, apiCfg.publicUrl, Some(stui))
       val announcer = new Announcer(None, apiCfg.publicUrl)
       val worker =
-        new Worker(monitors, notifiers, nodes, senders, announcer, WorkerConfig("node-a", apiCfg.publicUrl, "test"))
+        new Worker(
+          monitors,
+          notifiers,
+          nodes,
+          senders,
+          announcer,
+          WorkerConfig("node-a", apiCfg.publicUrl, "test", probePolicy = loopback)
+        )
       val app = ApiRoutes(
         Some(oidc),
         users,
         sess,
         apiCfg,
-        new MonitorRoutes(monitors, notifiers, pages, nodes, senders, box, sess, announcer, Some(stui)),
+        new MonitorRoutes(monitors, notifiers, pages, nodes, senders, box, sess, announcer, Some(stui), loopback),
         extra = stui.routes
       ).orNotFound
       Env(idp.routes.orNotFound, app, xa, worker, monitors, nodes, s"http://127.0.0.1:${srv.address.port.value}/health")

@@ -1,5 +1,6 @@
 package skotare.db
 
+import sbirds.db.*
 import cats.effect.*
 import cats.syntax.all.*
 import doobie.*
@@ -21,14 +22,21 @@ final class PageStore(xa: Transactor[IO]) extends TxStore(xa) {
   private def withItems(t: (UUID, String, String, String, String, Boolean)): ConnectionIO[StatusPageDto] =
     items(t._1).map(is => StatusPageDto(t._1, t._2, t._3, t._4, t._5, t._6, is))
 
-  def list: IO[List[StatusPageDto]] = tx((fr"select" ++ cols ++ fr"order by title").query[(
-    UUID,
-    String,
-    String,
-    String,
-    String,
-    Boolean
-  )].to[List].flatMap(_.traverse(withItems)))
+  /** 一覧（監視の並びは、ページの数だけ問い合わせずに1回でまとめて読む）. */
+  def list: IO[List[StatusPageDto]] = tx(
+    (fr"select" ++ cols ++ fr"order by title").query[(UUID, String, String, String, String, Boolean)].to[List].flatMap {
+      rows =>
+        (if rows.isEmpty then List.empty[(UUID, UUID, Option[String])].pure[ConnectionIO]
+         else
+           sql"""select page_id, monitor_id, display_name from status_page_monitor
+                 where page_id = any(${rows.map(_._1).toArray}) order by position, monitor_id"""
+             .query[(UUID, UUID, Option[String])].to[List]
+        ).map { is =>
+          val by = is.groupMap(_._1)(i => PageItem(i._2, i._3))
+          rows.map(t => StatusPageDto(t._1, t._2, t._3, t._4, t._5, t._6, by.getOrElse(t._1, Nil)))
+        }
+    }
+  )
 
   def find(id: UUID): IO[Option[StatusPageDto]] = tx(findC(fr"id = $id"))
   def bySlug(slug: String): IO[Option[StatusPageDto]] = tx(findC(fr"slug = $slug"))

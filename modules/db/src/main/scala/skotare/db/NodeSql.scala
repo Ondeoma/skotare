@@ -3,11 +3,8 @@ package skotare.db
 import doobie.*
 import doobie.implicits.*
 
-/** SQL の部品. */
-object Sql {
-
-  /** set a = 1, b = 2（空のリストは渡さないこと）. */
-  def set(fs: List[Fragment]): Fragment = fr"set" ++ fs.reduce(_ ++ fr"," ++ _)
+/** ノード・拠点の生死を見る SQL の部品（skotare 固有. 共通の部品は sbirds.db.Sql）. */
+object NodeSql {
 
   /** ノードが止まったとみなすまでの、心拍のない時間. */
   val AliveWindow: Fragment = fr"now() - interval '90 seconds'"
@@ -18,7 +15,4 @@ object Sql {
   /** 拠点で動いているノードの数（region は拠点の名前の式）. */
   def aliveNodes(region: Fragment): Fragment =
     fr"(select count(*)::int from node n where n.region =" ++ region ++ fr"and n.seen_at >" ++ AliveWindow ++ fr")"
-
-  /** 部分一致の LIKE のパターン（% と _ はそのままの文字として探す）. */
-  def like(q: String): String = "%" + q.trim.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 }
