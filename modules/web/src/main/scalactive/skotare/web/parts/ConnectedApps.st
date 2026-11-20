@@ -11,12 +11,12 @@ def initState() = State()
 
 def mounted(s: State): Unit = load(s)
 
-def load(s: State): Unit = Store.report(Api.oauthGrants())(gs => s.grants := gs)
+def load(s: State): Unit = Toasts.report(Api.oauthGrants())(gs => s.grants := gs)
 
 def revoke(s: State, g: OAuthGrantDto): Unit =
   Dialog.confirm(s"「${g.name}」との連携を取り消しますか？（${g.name} は、もう一度許可するまで ${AppNames.selfName} を使えなくなります）", "取り消す") {
-    Store.report(Api.revokeOAuthGrant(g.clientId)) { _ =>
-      Store.toast("連携を取り消しました")
+    Toasts.report(Api.revokeOAuthGrant(g.clientId)) { _ =>
+      Toasts.show("連携を取り消しました")
       load(s)
     }
   }

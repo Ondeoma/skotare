@@ -16,6 +16,9 @@ object Main {
     ScalactiveConfig.defaultTitle = Some("skotare")
     AppNames.init("skotare")
     Theme.apply()
+    // お知らせは 5 秒（エラーは 9 秒）で消し、同時に 4 つまで出す
+    Toasts.duration = 5000
+    Toasts.max = 4
     // skorimako のブラウザの観測（設定があるときだけ）と、PWA（ホーム画面に追加・オフラインで開く・プッシュ通知）
     // 共通部品（Pwa・Observe）からの更新の要求にも CSRF 対策のヘッダーを付ける（Api と同じ）
     sbirds.web.Fetch.extraHeaders = Map("X-Skotare" -> "1")

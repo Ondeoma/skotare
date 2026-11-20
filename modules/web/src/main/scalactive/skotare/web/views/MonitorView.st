@@ -9,34 +9,34 @@ import java.util.UUID
 // 監視の詳細: 状態・稼働率・応答時間のグラフ・90日の帯・障害・最近の結果. 15秒ごとに読み直す
 case class Props(monitorId: UUID)
 
-case class State(d: RV[Option[MonitorDetailDto]] = RV(None), timer: RV[Int] = RV(0))
+case class State(d: RV[Option[MonitorDetailDto]] = RV(None))
 
 def initState() = State()
 
-def load(s: State, props: Props): Unit = Store.report(Api.monitor(props.monitorId)) { d =>
+def load(s: State, props: Props): Unit = Toasts.report(Api.monitor(props.monitorId)) { d =>
   s.d := Some(d)
   pageTitle(d.monitor.name)
 }
 
 def mounted(s: State, props: Props): Unit = {
   load(s, props)
-  s.timer := dom.window.setInterval(() => if (dom.document.visibilityState.asInstanceOf[String] == "visible") load(s, props), 15000)
+  // タブが裏にある間は止め、戻ったらすぐ読み直す
+  useVisiblePolling(15000)(load(s, props))
+  ()
 }
 
-def unmounted(s: State): Unit = dom.window.clearInterval(s.timer.v)
-
 def m(s: State) = s.d.mapC(_.map(_.monitor).toList)
-def checkNow(s: State, props: Props): Unit = Store.report(Api.checkNow(props.monitorId)) { _ =>
-  Store.toast("確かめています…")
+def checkNow(s: State, props: Props): Unit = Toasts.report(Api.checkNow(props.monitorId)) { _ =>
+  Toasts.show("確かめています…")
   dom.window.setTimeout(() => load(s, props), 3000)
 }
 def toggle(s: State, props: Props, mo: MonitorDto): Unit =
-  Store.report(Api.saveMonitor(Some(mo.id), mo.toReq.copy(enabled = !mo.enabled))) { _ =>
-    Store.toast(if (mo.enabled) "一時停止しました" else "再開しました"); load(s, props); Store.refresh()
+  Toasts.report(Api.saveMonitor(Some(mo.id), mo.toReq.copy(enabled = !mo.enabled))) { _ =>
+    Toasts.show(if (mo.enabled) "一時停止しました" else "再開しました"); load(s, props); Store.refresh()
   }
 def remove(mo: MonitorDto): Unit =
   Dialog.confirm(s"「${mo.name}」を削除しますか？（確認の結果と障害の記録も消えます）", "削除する") {
-    Store.report(Api.deleteMonitor(mo.id)) { _ => Store.toast("削除しました"); Store.refresh(); Store.go("/") }
+    Toasts.report(Api.deleteMonitor(mo.id)) { _ => Toasts.show("削除しました"); Store.refresh(); Store.go("/") }
   }
 
 def checks(s: State) = s.d.mapC(_.map(_.checks).getOrElse(Nil))

@@ -7,7 +7,7 @@ case class State(open: RV[Boolean] = RV(false), list: RV[List[IncidentDto]] = RV
 
 def initState() = State()
 
-def load(s: State): Unit = Store.report(Api.incidents(s.open.v)) { is => s.list := is; s.loaded := true }
+def load(s: State): Unit = Toasts.report(Api.incidents(s.open.v)) { is => s.list := is; s.loaded := true }
 
 def mounted(s: State): Unit = { pageTitle("障害"); load(s); watch(s.open)((_, _) => load(s)) }
 

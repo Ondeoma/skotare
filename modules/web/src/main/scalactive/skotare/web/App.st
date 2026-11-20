@@ -33,7 +33,7 @@ def mounted(s: State): Unit = {
   Api.clientConfig().foreach(c => Store.config := Some(c))
   val path = dom.window.location.pathname
   if (path.startsWith("/login") || isStatusPage) s.ready := true
-  else Store.report(Api.me()) { me =>
+  else Toasts.report(Api.me()) { me =>
     Store.me := Some(me)
     AppNames.set(me.appNames)
     Observe.setUser(me.id.toString)
@@ -43,10 +43,10 @@ def mounted(s: State): Unit = {
 }
 
 // ログアウトするときは、この端末のプッシュ通知もやめる（ログアウトした端末に監視の様子を送らない）
-def logout(): Unit = Store.report(Pwa.disable().recover { case _ => "off" }.flatMap(_ => Api.logout()))(url => dom.window.location.href = url)
+def logout(): Unit = Toasts.report(Pwa.disable().recover { case _ => "off" }.flatMap(_ => Api.logout()))(url => dom.window.location.href = url)
 
 def loggedIn = computed(Store.me.v.isDefined && !Router.href.v.contains("/s/"))
-def meBrief = Store.me.mapC(_.map(_.brief))
+def meBrief = Store.me.mapC(_.map(_.brief.person))
 def userName = Store.me.mapC(_.map(_.name).getOrElse(""))
 def userEmail = Store.me.mapC(_.flatMap(_.email).getOrElse(""))
 def loadingClass = Store.loading.mapC(l => if (l) "progress on" else "progress")
@@ -83,15 +83,10 @@ def navClass(p: String) = Router.href.mapC { h =>
     <RouterLink v-for="n in nav" :to="n._1" :class="navClass(n._1)">{{ n._2 }}</RouterLink>
   </div>
   <main class="main">
-    <RouterComponent v-if="s.ready" :routes="routes" />
+    <RouterComponent v-if="s.ready" :routes="routes" :reloadOnQueryChange="false" />
   </main>
   <DialogHost />
-  <div class="toasts">
-    <div v-for="t in Store.toasts" :key="t.id" :class='if (t.error) "toast error" else "toast"'>
-      <span class="grow">{{ t.text }}</span>
-      <button @click="Store.dismiss(t.id)">×</button>
-    </div>
-  </div>
+  <ToastHost />
 </template>
 
 <style scoped>

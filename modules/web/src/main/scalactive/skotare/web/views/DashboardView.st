@@ -4,7 +4,7 @@ import skotare.web.parts.*
 import skotare.shared.*
 
 // 監視の一覧（ホーム）: 全体の様子と、監視ごとの状態・最近の結果・稼働率
-case class State(q: RV[String] = RV(Query.get("q").getOrElse("")), status: RV[String] = RV(""))
+case class State(q: RV[String] = RV(Router.query.v.get("q").getOrElse("")), status: RV[String] = RV(""))
 
 def initState() = State()
 

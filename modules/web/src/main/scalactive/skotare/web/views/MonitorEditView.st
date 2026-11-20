@@ -23,7 +23,7 @@ def initState() = State()
 
 def mounted(s: State, props: Props): Unit = {
   pageTitle(if (props.monitorId.isDefined) "監視の編集" else "監視を追加")
-  props.monitorId.foreach(id => Store.report(Api.monitor(id))(d => fill(s, d.monitor)))
+  props.monitorId.foreach(id => Toasts.report(Api.monitor(id))(d => fill(s, d.monitor)))
 }
 
 def fill(s: State, m: MonitorDto): Unit = {
@@ -77,7 +77,7 @@ def save(s: State, props: Props): Unit = check(s) match {
   case None =>
     s.error := ""
     Api.saveMonitor(props.monitorId, withName(s)).onComplete {
-      case Success(m) => Store.toast("保存しました"); Store.refresh(); Store.go(s"/monitors/${m.id}")
+      case Success(m) => Toasts.show("保存しました"); Store.refresh(); Store.go(s"/monitors/${m.id}")
       case Failure(e) => s.error := e.getMessage
     }
 }

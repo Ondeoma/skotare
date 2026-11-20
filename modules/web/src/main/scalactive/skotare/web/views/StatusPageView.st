@@ -3,14 +3,13 @@ import skotare.web.*
 import skotare.web.parts.*
 import skotare.shared.*
 
-import org.scalajs.dom
 import scala.util.{Failure, Success}
 import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
 
 // ゲストに見せるステータスページ（ログインしなくてよい）. 1分ごとに読み直す
 case class Props(slug: String)
 
-case class State(page: RV[Option[PublicStatusDto]] = RV(None), error: RV[String] = RV(""), timer: RV[Int] = RV(0))
+case class State(page: RV[Option[PublicStatusDto]] = RV(None), error: RV[String] = RV(""))
 
 def initState() = State()
 
@@ -21,10 +20,9 @@ def load(s: State, props: Props): Unit = Api.publicStatus(props.slug).onComplete
 
 def mounted(s: State, props: Props): Unit = {
   load(s, props)
-  s.timer := dom.window.setInterval(() => load(s, props), 60000)
+  useInterval(60000)(load(s, props))
+  ()
 }
-
-def unmounted(s: State): Unit = dom.window.clearInterval(s.timer.v)
 
 def pages(s: State) = s.page.mapC(_.toList)
 def bannerClass(p: PublicStatusDto): String = s"banner banner-${p.overall}"

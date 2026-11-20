@@ -15,7 +15,7 @@ case class State(list: RV[List[StatusPageDto]] = RV(Nil), edit: RV[Option[Edit]]
 
 def initState() = State()
 
-def load(s: State): Unit = Store.report(Api.pages())(s.list := _)
+def load(s: State): Unit = Toasts.report(Api.pages())(s.list := _)
 
 def mounted(s: State): Unit = { pageTitle("ステータスページ"); load(s) }
 
@@ -26,12 +26,12 @@ def open(s: State, p: Option[StatusPageDto]): Unit = s.edit := Some(p match {
 
 def save(s: State, e: Edit): Unit =
   Api.savePage(e.id, StatusPageReq(e.slug.v.trim, e.title.v.trim, e.description.v, e.notice.v, e.public.v, e.items.v)).onComplete {
-    case Success(_) => Store.toast("保存しました"); s.edit := None; load(s)
+    case Success(_) => Toasts.show("保存しました"); s.edit := None; load(s)
     case Failure(x) => e.error := x.getMessage
   }
 
 def remove(s: State, p: StatusPageDto): Unit = Dialog.confirm(s"ステータスページ「${p.title}」を削除しますか？（URL は見られなくなります）", "削除する") {
-  Store.report(Api.deletePage(p.id)) { _ => Store.toast("削除しました"); load(s) }
+  Toasts.report(Api.deletePage(p.id)) { _ => Toasts.show("削除しました"); load(s) }
 }
 
 def url(p: StatusPageDto): String = s"${window.location.origin}/s/${p.slug}"

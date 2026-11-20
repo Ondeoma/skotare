@@ -19,17 +19,17 @@ case class State(list: RV[List[NotifierDto]] = RV(Nil), edit: RV[Option[Edit]] =
 
 def initState() = State()
 
-def load(s: State): Unit = Store.report(Api.notifiers())(s.list := _)
+def load(s: State): Unit = Toasts.report(Api.notifiers())(s.list := _)
 
 def stuiOn = Store.config.mapC(_.exists(_.stui))
 
 /** stui との連携の状態と、選べるチャンネル. */
-def loadStui(s: State): Unit = Store.report(Api.integrations()) { is =>
+def loadStui(s: State): Unit = Toasts.report(Api.integrations()) { is =>
   s.stui := is.find(_.provider == "stui")
   s.channelError := ""
   if (s.stui.v.exists(_.connected)) Api.stuiChannels().onComplete {
     case Success(cs) => s.channels := cs
-    case Failure(x)  => s.channels := Nil; s.channelError := x.getMessage; Store.report(Api.integrations())(is => s.stui := is.find(_.provider == "stui"))
+    case Failure(x)  => s.channels := Nil; s.channelError := x.getMessage; Toasts.report(Api.integrations())(is => s.stui := is.find(_.provider == "stui"))
   }
 }
 
@@ -38,13 +38,13 @@ def mounted(s: State): Unit = {
   load(s)
   loadStui(s)
   // stui の許可画面から戻ったとき: 結果を知らせ、連携できたらチャンネルを選ぶ画面を開く
-  Query.get("integration").filter(_ == "stui").foreach { _ =>
-    Query.get("result") match {
-      case Some("connected") => Store.toast(s"${AppNames.nameOf("stui")} と連携しました"); open(s, None, channel = true)
-      case Some("denied")    => Store.toast(s"${AppNames.nameOf("stui")} との連携をやめました")
-      case _                 => Store.toast(s"${AppNames.nameOf("stui")} と連携できませんでした。もう一度試してください")
+  Router.query.v.get("integration").filter(_ == "stui").foreach { _ =>
+    Router.query.v.get("result") match {
+      case Some("connected") => Toasts.show(s"${AppNames.nameOf("stui")} と連携しました"); open(s, None, channel = true)
+      case Some("denied")    => Toasts.show(s"${AppNames.nameOf("stui")} との連携をやめました")
+      case _                 => Toasts.show(s"${AppNames.nameOf("stui")} と連携できませんでした。もう一度試してください")
     }
-    dom.window.history.replaceState(null, "", dom.window.location.pathname)
+    Router.setQuery("integration" -> None, "result" -> None)
   }
 }
 
@@ -69,7 +69,7 @@ def save(s: State, e: Edit): Unit = {
     val r = NotifierReq(name, e.kind.v, cfg, if (ch.isDefined) None else Option(e.secret.v.trim).filter(_.nonEmpty), e.all.v, e.monitors.v, e.enabled.v,
       hook = ch.isDefined && e.hook.v && canHook(s, e).v)
     Api.saveNotifier(e.id, r).onComplete {
-      case Success(_) => Store.toast("保存しました"); s.edit := None; load(s)
+      case Success(_) => Toasts.show("保存しました"); s.edit := None; load(s)
       case Failure(x) => e.error := x.getMessage
     }
   }
@@ -80,13 +80,13 @@ def connect(): Unit = dom.window.location.href = "/api/integrations/stui/connect
 
 def disconnect(s: State): Unit =
   Dialog.confirm(s"${AppNames.nameOf("stui")} との連携をやめますか？ あなたの連携で投稿している通知先（${AppNames.nameOf("stui")} のチャンネル）には、送れなくなります。", "連携をやめる") {
-    Store.report(Api.disconnectStui()) { _ => Store.toast(s"${AppNames.nameOf("stui")} との連携をやめました"); s.channels := Nil; loadStui(s) }
+    Toasts.report(Api.disconnectStui()) { _ => Toasts.show(s"${AppNames.nameOf("stui")} との連携をやめました"); s.channels := Nil; loadStui(s) }
   }
 
-def test(n: NotifierDto): Unit = Store.report(Api.testNotifier(n.id))(_ => Store.toast(s"「${n.name}」に試しに送りました"))
+def test(n: NotifierDto): Unit = Toasts.report(Api.testNotifier(n.id))(_ => Toasts.show(s"「${n.name}」に試しに送りました"))
 
 def remove(s: State, n: NotifierDto): Unit = Dialog.confirm(s"通知先「${n.name}」を削除しますか？", "削除する") {
-  Store.report(Api.deleteNotifier(n.id)) { _ => Store.toast("削除しました"); load(s) }
+  Toasts.report(Api.deleteNotifier(n.id)) { _ => Toasts.show("削除しました"); load(s) }
 }
 
 def toggle(e: Edit, id: UUID): Unit = e.monitors := (if (e.monitors.v.contains(id)) e.monitors.v.filterNot(_ == id) else e.monitors.v :+ id)
